@@ -2,335 +2,296 @@
 
 **Architecture verification and modular monolith toolkit for Go.**
 
-`gomodulith` aims to make modular monolith architecture explicit, testable, documentable, and friendly to both humans and AI coding agents.
+`gomodulith` makes modular monolith architecture explicit, testable, documentable, and friendly to both humans and AI coding agents.
 
 It is inspired by the ideas behind Spring Modulith and architecture-testing tools, but is designed around Go's package model, `internal` visibility rules, `go/packages`, and idiomatic `go test` workflows.
 
-> Status: early design / pre-alpha. The API examples below describe the intended developer experience and may change before the first release.
+## Features
 
-## Why
+- **Module discovery** — derive application modules from a Go codebase using the `internal/<module>/...` convention, or declare them explicitly.
+- **Boundary verification** — detect imports that reach into another module's private (non-API) packages.
+- **Dependency rules** — declare which modules may (or may not) depend on which others.
+- **Cycle detection** — detect cyclic module dependencies, including cycles that span multiple packages per module and are invisible at the package level.
+- **Architecture documentation** — generate Mermaid / D2 / JSON representations of the real module graph.
+- **AI/CI-readable contracts** — export machine-readable architecture models that coding agents, CI, and code-review automation can consume.
+- **Architecture diffing** — compare two exported models — or two git revisions — and report exactly what changed.
+- **SARIF output** — export verification findings as SARIF 2.1.0 for GitHub code scanning.
+- **Project configuration** — configure discovery and dependency rules from a `.gomodulith.yaml` or `.gomodulith.toml` file, auto-discovered by the CLI.
 
-A Go monolith usually starts simple:
+## Installation
+
+```bash
+go get github.com/MouXiaoJun/gomodulith/modulith
+```
+
+To install the CLI:
+
+```bash
+go install github.com/MouXiaoJun/gomodulith/cmd/gomodulith@latest
+```
+
+## Quick start
+
+A typical modular monolith looks like this:
 
 ```text
 internal/
 ├── user/
-├── order/
-├── payment/
-└── notification/
-```
-
-As the codebase grows, module boundaries become conventions that live in people's heads:
-
-- Which packages are public APIs of a module?
-- Which modules may depend on each other?
-- Is `order` allowed to import `user/internal`?
-- Did a recent change introduce a dependency cycle?
-- What is the actual module graph today?
-- Can CI prevent architecture drift?
-- Can an AI coding agent understand the same architectural constraints before editing code?
-
-`gomodulith` is intended to turn those conventions into executable architecture.
-
-## Goals
-
-`gomodulith` is planned around six core capabilities:
-
-1. **Module discovery** — derive application modules from a Go codebase.
-2. **Boundary verification** — detect imports that violate module APIs.
-3. **Dependency rules** — declare which modules may depend on which others.
-4. **Cycle detection** — fail fast on cyclic module dependencies.
-5. **Architecture documentation** — generate Mermaid / JSON representations of the real module graph.
-6. **AI-readable architecture** — export machine-readable constraints that coding agents can consume before modifying a repository.
-
-## Design principles
-
-### Go-first
-
-No annotations, decorators, runtime reflection framework, or Java-style container is required.
-
-The design should work naturally with:
-
-```text
-go test ./...
-go list
-golang.org/x/tools/go/packages
-internal packages
-standard Go modules
-```
-
-### Architecture as code
-
-Architecture rules should be executable in normal tests:
-
-```go
-func TestArchitecture(t *testing.T) {
-    app := modulith.Scan(t, "./...")
-    app.Verify()
-}
-```
-
-A violation should look like a test failure, not a wiki page nobody remembers to update.
-
-### Convention first, configuration when needed
-
-A common module layout should work with little or no configuration:
-
-```text
-internal/
-├── user/
-│   ├── api/
+│   ├── api/      # public API of the module
 │   ├── domain/
-│   └── internal/
+│   └── internal/ # private implementation
 ├── order/
 │   ├── api/
-│   ├── domain/
 │   └── internal/
 └── payment/
-    ├── api/
-    └── internal/
+    └── api/
 ```
 
-Cross-module imports may use a module's exported API:
+By convention, a module's `api` sub-packages form its **public API**. Cross-module imports may use another module's public API, but must not reach into its implementation details.
+
+### Architecture tests
+
+Add a test to your module that scans the codebase and verifies the architecture:
 
 ```go
-import "example.com/app/internal/user/api"
-```
+package app_test
 
-but should not reach into implementation details:
+import (
+    "testing"
 
-```go
-import "example.com/app/internal/user/domain" // architecture violation
-```
+    "github.com/MouXiaoJun/gomodulith/modulith"
+)
 
-The exact conventions are still being designed and will be configurable where Go project layouts differ.
-
-## Intended API
-
-### Verify architecture
-
-```go
 func TestArchitecture(t *testing.T) {
     app := modulith.Scan(t, "./...")
-
-    app.Verify()
+    app.VerifyTest(t)
 }
 ```
 
-Example output:
+A violation fails the test with a report like this:
 
 ```text
-✓ user
-✓ order
+✗ order
 ✓ payment
+✓ user
 
-order -> user/api         OK
-payment -> order/api      OK
-order -> user/internal    VIOLATION
+order   -> user         OK
+    example.com/app/internal/order/api -> example.com/app/internal/user/api
+    example.com/app/internal/order/domain -> example.com/app/internal/user/domain
+payment -> order        OK
 
-cycle detected:
-user -> order -> payment -> user
+order · example.com/app/internal/order/domain:  [cross-module-private-access] module "order" imports private package "example.com/app/internal/user/domain" of module "user"; import the public API instead
+
+architecture violations: 1 error(s), 0 warning(s)
 ```
 
 ### Explicit module rules
 
-For projects that do not follow the default conventions:
+For projects that do not follow the default convention, declare modules and rules explicitly:
 
 ```go
 func TestArchitecture(t *testing.T) {
-    app := modulith.New(t).
+    app := modulith.New().
         Module("user", "./internal/user/...").
         Module("order", "./internal/order/...").
         Module("payment", "./internal/payment/...")
 
-    app.Module("order").
-        AllowDependencies("user", "payment")
+    app.ModuleRules("order").AllowDependencies("user", "payment")
+    app.ModuleRules("payment").AllowDependencies("user")
+    app.ModuleRules("order").ForbidDependencies("billing")
 
-    app.Module("payment").
-        AllowDependencies("user")
-
-    app.Verify()
+    app.VerifyTest(t)
 }
 ```
 
-The fluent API above is illustrative; the final public API will be stabilized before v1.
+In explicit mode, a module without declared `AllowDependencies` is **closed** by default: any module dependency it has is reported as undeclared.
 
-## Module graph
+### Pure API
 
-A CLI is planned for inspecting the actual architecture:
+The library API does not depend on `testing` and can be used from tools, CI, and build scripts:
 
-```bash
-gomodulith graph
-```
-
-Example:
-
-```text
-              ┌─────────┐
-              │  user   │
-              └────▲────┘
-                   │
-              ┌────┴────┐
-              │  order  │
-              └────▲────┘
-                   │
-              ┌────┴────┐
-              │ payment │
-              └─────────┘
-```
-
-Planned output formats:
-
-```bash
-gomodulith graph --format mermaid
-gomodulith graph --format json
-gomodulith graph --format d2
-```
-
-Possible Mermaid output:
-
-```mermaid
-graph TD
-    payment --> order
-    order --> user
-```
-
-## AI-readable architecture
-
-One goal of `gomodulith` is to make architecture constraints consumable by coding agents.
-
-```bash
-gomodulith export --format json > .gomodulith/architecture.json
-```
-
-Example shape:
-
-```json
-{
-  "modules": [
-    {
-      "name": "order",
-      "public_packages": ["internal/order/api"],
-      "allowed_dependencies": ["user", "payment"]
-    }
-  ],
-  "rules": {
-    "cycles": "forbidden",
-    "internal_cross_module_imports": "forbidden"
-  }
+```go
+app, err := modulith.Load(context.Background(), "./...")
+if err != nil {
+    log.Fatal(err)
 }
+
+res, err := app.Verify()
+if err != nil {
+    log.Fatal(err)
+}
+for _, issue := range res.Errors() {
+    fmt.Println(issue)
+}
+
+jsonData, _ := app.ExportJSON(true)   // machine-readable contract + findings
+mermaid := app.ExportMermaid()        // graph documentation
 ```
 
-This can be used by CI, code-review automation, IDE integrations, and AI coding agents as a stable architecture contract.
+## CLI
 
-## Planned checks
-
-The first versions will focus on checks that can be derived reliably from Go's import graph:
-
-- cross-module private package access;
-- undeclared module dependencies;
-- cyclic module dependencies;
-- orphan / unclassified packages;
-- forbidden package imports;
-- public API package validation;
-- module dependency graph changes.
-
-Later versions may explore higher-level rules such as:
-
-- event-based module interaction;
-- module integration tests;
-- architecture diffing between Git refs;
-- runtime module observability;
-- SARIF output for GitHub code scanning;
-- editor / language-server integrations.
-
-## CLI vision
-
-```text
-gomodulith verify
-    Verify module boundaries and dependency rules.
-
-gomodulith graph
-    Render the discovered module graph.
-
-gomodulith explain order
-    Explain a module's public API, dependencies and dependents.
-
-gomodulith export
-    Export an AI/CI-readable architecture model.
-
-gomodulith diff <base> <head>
-    Show architecture changes between two revisions.
+```bash
+gomodulith verify [patterns...] [--json|--sarif] [--out <file>]   # verify boundaries and rules (exit 1 on violation)
+gomodulith graph [--format text|mermaid|json|d2]                  # render the module graph
+gomodulith explain <module>                                       # explain a module's API, dependencies and dependents
+gomodulith export [--verify] [--format json|sarif|mermaid|d2] [--out <file>]  # export the architecture model
+gomodulith diff <base> <head>                                     # show architecture changes between two states
 ```
 
-## Example CI workflow
+`diff` accepts either a path to an exported architecture JSON file, or a git revision (`HEAD`, `HEAD~1`, a tag or commit hash) that is scanned from a temporary checkout — for example `gomodulith diff origin/main HEAD` to see what a pull request changed.
 
-Eventually, CI should be as simple as:
+When a `.gomodulith.yaml` / `.gomodulith.toml` exists in the project (or a parent directory), the CLI reads it automatically and applies its modules and rules.
+
+Example CI usage:
 
 ```yaml
 - name: Verify architecture
   run: gomodulith verify ./...
+
+- name: Export findings as SARIF
+  if: always()
+  run: gomodulith export --format sarif --verify --out gomodulith.sarif
+
+- name: Upload SARIF to code scanning
+  if: always()
+  uses: github/codeql-action/upload-sarif@v3
+  with:
+    sarif_file: gomodulith.sarif
 ```
 
-and architecture tests should also remain runnable through standard Go tooling:
+A complete, copy-paste workflow is provided in [`examples/architecture-ci.yml`](examples/architecture-ci.yml).
 
-```bash
-go test ./...
+## Checks
+
+`gomodulith verify` runs the following checks:
+
+| Check | Severity | Description |
+|---|---|---|
+| `cross-module-private-access` | error | A module imports another module's private package instead of its public API |
+| `undeclared-dependency` | error | A module depends on a module that is not in its allowed dependencies |
+| `forbidden-dependency` | error | A module depends on a module explicitly declared as forbidden |
+| `cycle` | error | Cyclic module dependencies |
+| `invalid-public-api` | error | A declared public API package does not exist or belongs to another module |
+| `missing-public-api` | warning | A module has no public API package (error when `PublicAPIRequired` is set) |
+| `orphan-package` | warning | A package is not part of any module (opt-in via `ReportOrphans`) |
+
+## Configuration
+
+Discovery and verification are controlled by `modulith.Config`:
+
+```go
+cfg := modulith.NewConfig()
+cfg.ModuleRoot = "internal"     // directory scanned for modules
+cfg.APIElement = "api"          // sub-package marking a module's public API
+cfg.ReportOrphans = true        // warn about unclassified packages
+cfg.PublicAPIRequired = true    // make missing public APIs an error
+
+app := modulith.NewWithConfig(cfg)
 ```
 
-## Non-goals
+### Project configuration file
 
-`gomodulith` is **not** intended to become:
+For teams, the same settings plus module rules can live in a checked-in
+`.gomodulith.yaml` or `.gomodulith.toml`. The CLI discovers it automatically
+(upward from the working directory) and applies it to `verify`, `graph`,
+`explain`, `export` and `diff`.
 
-- a dependency injection container;
-- a web framework;
-- a service mesh;
-- a microservice framework;
-- a replacement for the Go compiler's `internal` rules;
-- a general-purpose linter replacement;
-- a runtime module system.
+```yaml
+# .gomodulith.yaml
+module_root: internal            # optional; defaults to "internal"
+api_element: api                 # optional; defaults to "api"
+report_orphans: false
+public_api_required: false
+patterns: ["./..."]              # default load patterns when none are given
 
-The focus is narrow: **make modular Go architecture explicit and enforceable.**
+modules:                         # optional: enables explicit rule mode
+  user:
+    patterns: ["./internal/user/..."]
+  order:
+    patterns: ["./internal/order/..."]
+    allowed: ["user"]            # order may depend on user
+    forbidden: ["billing"]
+    public: ["./internal/order/api"]
+```
+
+```toml
+# .gomodulith.toml
+module_root = "internal"
+report_orphans = true
+patterns = ["./..."]
+
+[modules.user]
+patterns = ["./internal/user/..."]
+
+[modules.order]
+patterns = ["./internal/order/..."]
+allowed = ["user"]
+```
+
+When `modules` is empty, the file only adjusts convention discovery. When it
+declares modules, the application runs in explicit rule mode (as in the
+programmatic `New()` API). The library exposes the same configuration through
+`modulith.LoadConfigFile` / `modulith.ParseConfig` / `FileConfig.Build`.
+
+### Analysing another directory or git revision
+
+The library can scan an arbitrary directory without touching the process
+working directory:
+
+```go
+app, err := modulith.LoadIn(ctx, "/path/to/checkout", "./...")
+```
+
+This is what powers the CLI's `diff <git-ref> <git-ref>` and is handy for
+tools that analyse a revision other than the current checkout.
+
+### SARIF output
+
+`app.ExportSARIF()` returns verification findings as a SARIF 2.1.0 document,
+ready for GitHub code scanning and similar consumers. Use it from Go, or via
+`gomodulith verify --sarif` / `gomodulith export --format sarif --verify`.
 
 ## Roadmap
 
-### v0.1 — Architecture model
+### v0.1 — Architecture model ✅
 
-- [ ] load packages with `go/packages`;
-- [ ] discover modules from conventions;
-- [ ] build module dependency graph;
-- [ ] detect cycles;
-- [ ] report cross-module boundary violations;
-- [ ] `gomodulith verify`;
-- [ ] architecture tests through `go test`.
+- [x] load packages with `go/packages`
+- [x] discover modules from conventions
+- [x] build module dependency graph
+- [x] detect cycles
+- [x] report cross-module boundary violations
+- [x] `gomodulith verify`
+- [x] architecture tests through `go test`
 
-### v0.2 — Rules and configuration
+### v0.2 — Rules and configuration ✅
 
-- [ ] explicit module definitions;
-- [ ] allowed / forbidden dependencies;
-- [ ] public API package declarations;
-- [ ] useful diagnostics with import paths and source positions;
-- [ ] YAML or TOML project configuration if configuration proves necessary.
+- [x] explicit module definitions
+- [x] allowed / forbidden dependencies
+- [x] public API package declarations
+- [x] useful diagnostics with import paths
+- [x] programmatic configuration
 
-### v0.3 — Documentation
+### v0.3 — Documentation ✅
 
-- [ ] Mermaid graph output;
-- [ ] JSON architecture export;
-- [ ] module dependency reports;
-- [ ] `gomodulith explain`.
+- [x] Mermaid graph output
+- [x] D2 graph output
+- [x] JSON architecture export
+- [x] module dependency reports (`explain`)
+- [x] architecture diffing between exports
 
-### v0.4 — CI and architecture evolution
+### v0.4 — CI and architecture evolution ✅
 
-- [ ] architecture diff between Git revisions;
-- [ ] SARIF output;
-- [ ] GitHub Actions examples;
-- [ ] machine-readable architecture contracts for AI coding agents.
+- [x] git-revision diffing (`gomodulith diff <ref> <ref>`)
+- [x] SARIF output for GitHub code scanning
+- [x] YAML/TOML project configuration files
+- [ ] event-based module interaction rules
+- [ ] architecture contract checks for AI coding agents in-repo (`.gomodulith/`)
 
 ## Project philosophy
 
 A modular monolith should not depend on developers remembering a diagram from six months ago.
 
-The source code already contains the real dependency graph. `gomodulith` should read that graph, compare it with the intended architecture, and make divergence impossible to ignore.
+The source code already contains the real dependency graph. `gomodulith` reads that graph, compares it with the intended architecture, and makes divergence impossible to ignore.
 
 ```text
 architecture convention
@@ -344,12 +305,24 @@ CI
 documentation + AI context
 ```
 
-If the architecture changes, the contract changes with it — deliberately and visibly.
+## Non-goals
+
+`gomodulith` is **not**:
+
+- a dependency injection container;
+- a web framework;
+- a service mesh;
+- a microservice framework;
+- a replacement for the Go compiler's `internal` rules;
+- a general-purpose linter replacement;
+- a runtime module system.
+
+The focus is narrow: **make modular Go architecture explicit and enforceable.**
 
 ## Contributing
 
-The project is currently in the design stage. Issues discussing module discovery rules, package conventions, diagnostics, and public API design are especially welcome.
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. Issues discussing module discovery rules, package conventions, diagnostics, and public API design are especially welcome.
 
 ## License
 
-A license will be added before the first release.
+[MIT](LICENSE)

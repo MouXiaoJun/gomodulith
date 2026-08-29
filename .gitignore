@@ -1,0 +1,14 @@
+# Binaries
+/gomodulith
+
+# OS
+.DS_Store
+
+# Editor
+.idea/
+.vscode/
+*.swp
+
+# Test artifacts
+*.out
+*.test

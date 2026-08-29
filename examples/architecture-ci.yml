@@ -1,0 +1,59 @@
+# gomodulith architecture verification in GitHub Actions
+#
+# Copy this file into your repository as `.github/workflows/architecture.yml`
+# (adjust the go-version and gomodulith version to match your project) to:
+#   1. fail the build when module boundaries or dependency rules are violated,
+#   2. upload the findings as SARIF so they appear in GitHub code scanning,
+#   3. report an architecture diff against the main branch.
+#
+# Requires the gomodulith CLI, installed below via `go install`.
+
+name: architecture
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Fetch enough history for `gomodulith diff` against origin/main.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+
+      - name: Install gomodulith
+        run: go install github.com/MouXiaoJun/gomodulith/cmd/gomodulith@latest
+
+      # Reads .gomodulith.yaml/.toml when present, otherwise scans ./... with
+      # the default convention. Exits non-zero on errors/violations.
+      - name: Verify architecture
+        run: gomodulith verify
+
+      # Still produce SARIF even when verification failed, so every finding is
+      # visible in code scanning.
+      - name: Export findings as SARIF
+        if: always()
+        run: gomodulith export --format sarif --verify --out gomodulith.sarif
+
+      - name: Upload SARIF to code scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: gomodulith.sarif
+
+      # Example: fail on architecture drift introduced by a PR.
+      # Adjust the base ref to your default branch name.
+      - name: Architecture diff vs main
+        if: github.event_name == 'pull_request'
+        run: gomodulith diff "origin/${{ github.base_ref }}" "HEAD"
