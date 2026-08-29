@@ -20,7 +20,7 @@ import (
 	"github.com/MouXiaoJun/gomodulith/modulith"
 )
 
-const version = "0.5.0"
+const version = "0.6.0"
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
@@ -84,12 +84,13 @@ Run "gomodulith <command> -h" for command-specific options.
 // the project configuration (.gomodulith.yaml/.gomodulith.toml) when present,
 // using the given patterns (defaulting to "./...").
 func loadApp(ctx context.Context, patterns []string) (*modulith.Application, error) {
-	return loadAppIn(ctx, "", patterns)
+	return loadAppIn(ctx, "", patterns, false)
 }
 
 // loadAppIn is loadApp with an explicit working directory ("" for the current
-// one). It does not change the process working directory.
-func loadAppIn(ctx context.Context, dir string, patterns []string) (*modulith.Application, error) {
+// one) and an optional disk cache. It does not change the process working
+// directory.
+func loadAppIn(ctx context.Context, dir string, patterns []string, useCache bool) (*modulith.Application, error) {
 	if len(patterns) == 0 {
 		patterns = []string{"./..."}
 	}
@@ -98,7 +99,13 @@ func loadAppIn(ctx context.Context, dir string, patterns []string) (*modulith.Ap
 		if err != nil {
 			return nil, err
 		}
+		if useCache {
+			return fc.BuildCached(ctx, dir, patterns, "")
+		}
 		return fc.Build(ctx, dir, patterns)
+	}
+	if useCache {
+		return modulith.LoadCachedIn(ctx, dir, patterns, "")
 	}
 	return modulith.LoadIn(ctx, dir, patterns...)
 }

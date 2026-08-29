@@ -222,3 +222,38 @@ func (fc *FileConfig) Build(ctx context.Context, dir string, patterns []string) 
 	}
 	return app, nil
 }
+
+// BuildCached is Build with a disk cache. See LoadCachedWithConfigIn and
+// LoadExplicitCached for the caching semantics.
+func (fc *FileConfig) BuildCached(ctx context.Context, dir string, patterns []string, cacheDir string) (*Application, error) {
+	patterns = fc.LoadPatterns(patterns)
+	if len(fc.Modules) == 0 {
+		return LoadCachedWithConfigIn(ctx, dir, fc.config(), patterns, cacheDir)
+	}
+
+	app := NewWithConfig(fc.config())
+	names := make([]string, 0, len(fc.Modules))
+	for n := range fc.Modules {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		mc := fc.Modules[n]
+		app.Module(n, mc.Patterns...)
+		app.ModuleRules(n).AllowDependencies(mc.Allowed...)
+		app.ModuleRules(n).ForbidDependencies(mc.Forbidden...)
+		if len(mc.Public) > 0 {
+			app.ModuleRules(n).Public(mc.Public...)
+		}
+		if len(mc.PublishEvents) > 0 {
+			app.ModuleRules(n).PublishEvents(mc.PublishEvents...)
+		}
+		if len(mc.EventDrivenFrom) > 0 {
+			app.ModuleRules(n).EventDrivenFrom(mc.EventDrivenFrom...)
+		}
+	}
+	if err := LoadExplicitCached(ctx, dir, app, patterns, cacheDir); err != nil {
+		return nil, err
+	}
+	return app, nil
+}

@@ -7,7 +7,7 @@ import (
 )
 
 // Version is the gomodulith library version.
-const Version = "0.5.0"
+const Version = "0.6.0"
 
 // ContractHeader is the heading used at the top of generated contracts. Tools
 // can rely on it to detect a gomodulith-generated contract.

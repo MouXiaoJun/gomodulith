@@ -15,9 +15,11 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("verify", flag.ExitOnError)
 	jsonOut := fs.Bool("json", false, "emit the result as JSON")
 	sarifOut := fs.Bool("sarif", false, "emit the findings as SARIF 2.1.0 (GitHub code scanning)")
+	lspOut := fs.Bool("lsp", false, "emit the findings as LSP-style diagnostics")
+	noCache := fs.Bool("no-cache", false, "disable the on-disk model cache")
 	outFile := fs.String("out", "", "write output to this file instead of stdout")
 	fs.Usage = func() {
-		fmt.Fprint(stderr, "Usage: gomodulith verify [patterns...] [--json|--sarif] [--out <file>]\n")
+		fmt.Fprint(stderr, "Usage: gomodulith verify [patterns...] [--json|--sarif|--lsp] [--no-cache] [--out <file>]\n")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -25,7 +27,7 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 	}
 
 	ctx := context.Background()
-	app, err := loadApp(ctx, fs.Args())
+	app, err := loadAppIn(ctx, "", fs.Args(), !*noCache)
 	if err != nil {
 		fmt.Fprintf(stderr, "gomodulith verify: %v\n", err)
 		return 1
@@ -39,6 +41,19 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 
 	var output []byte
 	switch {
+	case *lspOut:
+		diags, err := app.ExportDiagnostics()
+		if err != nil {
+			fmt.Fprintf(stderr, "gomodulith verify: %v\n", err)
+			return 1
+		}
+		data, err := marshalJSON(diags)
+		if err != nil {
+			fmt.Fprintf(stderr, "gomodulith verify: %v\n", err)
+			return 1
+		}
+		output = append(output, data...)
+		output = append(output, '\n')
 	case *sarifOut:
 		data, err := app.ExportSARIF()
 		if err != nil {

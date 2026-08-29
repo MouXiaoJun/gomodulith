@@ -85,7 +85,7 @@ func modelFromGitRef(ctx context.Context, ref string) (*modulith.ArchitectureMod
 		return nil, err
 	}
 
-	app, err := loadAppIn(ctx, tmp, nil)
+	app, err := loadAppIn(ctx, tmp, nil, false)
 	if err != nil {
 		return nil, fmt.Errorf("scan git revision %q: %w", ref, err)
 	}

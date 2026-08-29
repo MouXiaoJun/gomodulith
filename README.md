@@ -19,6 +19,8 @@ It is inspired by the ideas behind Spring Modulith and architecture-testing tool
 - **Project configuration** — configure discovery and dependency rules from a `.gomodulith.yaml` or `.gomodulith.toml` file, auto-discovered by the CLI.
 - **Event-driven rules** — declare published events and event-only boundaries between modules.
 - **AI agent contract** — generate a Markdown architecture contract (`.gomodulith/architecture.md`) that AI coding agents read before writing code.
+- **LSP-style diagnostics** — emit violations as LSP diagnostics (`verify --lsp`) for editors and language servers.
+- **Incremental caching** — cache the loaded model on disk so repeated `verify` runs skip the expensive `go/packages` load.
 
 ## Installation
 
@@ -154,7 +156,7 @@ mermaid := app.ExportMermaid()        // graph documentation
 ## CLI
 
 ```bash
-gomodulith verify [patterns...] [--json|--sarif] [--out <file>]   # verify boundaries and rules (exit 1 on violation)
+gomodulith verify [patterns...] [--json|--sarif|--lsp] [--no-cache] [--out <file>]  # verify boundaries and rules (exit 1 on violation)
 gomodulith graph [--format text|mermaid|json|d2]                  # render the module graph
 gomodulith explain <module>                                       # explain a module's API, dependencies and dependents
 gomodulith export [--verify] [--format json|sarif|mermaid|d2|dot] [--out <file>]  # export the architecture model
@@ -308,6 +310,43 @@ tools that analyse a revision other than the current checkout.
 ready for GitHub code scanning and similar consumers. Use it from Go, or via
 `gomodulith verify --sarif` / `gomodulith export --format sarif --verify`.
 
+### LSP-style diagnostics
+
+For editors and language servers, `gomodulith verify --lsp` emits violations as
+LSP `Diagnostic` objects, each attached to the first source file of the
+offending package (`file://` URI, zero-based range, LSP severity):
+
+```json
+{
+  "uri": "file:///path/to/internal/order/domain/dom.go",
+  "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 0 } },
+  "severity": 1,
+  "code": "cross-module-private-access",
+  "source": "gomodulith",
+  "message": "module \"order\" imports private package ..."
+}
+```
+
+From Go, use `app.ExportDiagnostics()`. Diagnostics are package-level: they
+point at the package's file, not a specific line.
+
+### Incremental caching
+
+On large repositories the `go/packages` load dominates runtime. `gomodulith
+verify` caches the loaded model in `.gomodulith/cache/model.json` and skips the
+load on subsequent runs when nothing changed. The cache key covers `go.mod`,
+`go.sum`, the Go toolchain version, the configuration, and the size+mtime of
+every Go file, so a stale cache can never hide a change.
+
+```bash
+gomodulith verify            # first run populates the cache
+gomodulith verify            # subsequent runs reuse it
+gomodulith verify --no-cache # bypass the cache
+```
+
+From Go, use `LoadCachedIn` / `LoadExplicitCached` with your own cache
+directory.
+
 ## Roadmap
 
 ### v0.1 — Architecture model ✅
@@ -349,8 +388,12 @@ ready for GitHub code scanning and similar consumers. Use it from Go, or via
 - [x] Graphviz DOT graph export (`export --format dot`)
 - [x] directory-aware test helpers (`ScanDir` / `ScanDirWithConfig`)
 - [x] CI workflow now publishes the contract and graphs as artifacts
-- [ ] IDE/editor diagnostics (LSP-style) for violations
-- [ ] incremental caching for large repositories
+
+### v0.6 — Editors and speed ✅
+
+- [x] LSP-style diagnostics (`verify --lsp` / `ExportDiagnostics`)
+- [x] incremental on-disk model cache (`verify` cache, `--no-cache`, `LoadCachedIn` / `LoadExplicitCached`)
+- [ ] interactive TUI / richer terminal reporting
 
 ## Project philosophy
 

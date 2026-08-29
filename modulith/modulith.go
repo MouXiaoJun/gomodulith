@@ -68,6 +68,10 @@ type Package struct {
 	RelDir  string   // directory relative to the working directory
 	Imports []string // sorted, de-duplicated import paths
 
+	// GoFiles lists the absolute paths of the package's Go source files
+	// (excluding test files), as reported by go/packages.
+	GoFiles []string
+
 	// ExportedTypes lists the exported type names declared by the package,
 	// sorted. Populated when type information is available.
 	ExportedTypes []string
@@ -166,6 +170,19 @@ type Application struct {
 
 // Config returns a copy of the configuration used by the application.
 func (a *Application) Config() Config { return a.config }
+
+// String returns a stable canonical representation of the configuration,
+// suitable for cache keys and diffing.
+func (c Config) String() string {
+	return strings.Join([]string{
+		"module_root=" + c.ModuleRoot,
+		"api_element=" + c.APIElement,
+		"internal_element=" + c.InternalElement,
+		"event_element=" + c.EventElement,
+		fmt.Sprintf("report_orphans=%t", c.ReportOrphans),
+		fmt.Sprintf("public_api_required=%t", c.PublicAPIRequired),
+	}, "|")
+}
 
 // WorkingDir returns the working directory the application was loaded from.
 func (a *Application) WorkingDir() string { return a.wd }

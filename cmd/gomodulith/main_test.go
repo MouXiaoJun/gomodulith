@@ -526,3 +526,56 @@ func TestRunVerifyEventConfig(t *testing.T) {
 		t.Errorf("expected missing-published-event:\n%s", out)
 	}
 }
+
+func TestRunVerifyLSP(t *testing.T) {
+	writeCLIFixture(t, map[string]string{
+		"internal/user/api/api.go":     cliFile("api", nil),
+		"internal/user/domain/dom.go":  cliFile("domain", nil),
+		"internal/order/api/api.go":    cliFile("api", []string{cliFixtureModule + "/internal/user/api"}),
+		"internal/order/domain/dom.go": cliFile("domain", []string{cliFixtureModule + "/internal/user/domain"}),
+	})
+	out, code := runCLI(t, "verify", "--lsp")
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1\n%s", code, out)
+	}
+	if !strings.Contains(out, `"uri": "file://`) {
+		t.Errorf("missing file uri:\n%s", out)
+	}
+	if !strings.Contains(out, `"code": "cross-module-private-access"`) {
+		t.Errorf("missing code:\n%s", out)
+	}
+	if !strings.Contains(out, `"severity": 1`) {
+		t.Errorf("missing severity 1:\n%s", out)
+	}
+}
+
+func TestRunVerifyCacheHit(t *testing.T) {
+	writeCLIFixture(t, cliHealthyFixture())
+	// First run populates .gomodulith/cache.
+	out1, code1 := runCLI(t, "verify")
+	if code1 != 0 {
+		t.Fatalf("first run exit = %d\n%s", code1, out1)
+	}
+	cachePath := ".gomodulith/cache/model.json"
+	if _, err := os.Stat(cachePath); err != nil {
+		t.Fatalf("cache not created: %v", err)
+	}
+	st1, _ := os.Stat(cachePath)
+	// Second run should hit the cache (cache file unchanged).
+	out2, code2 := runCLI(t, "verify")
+	if code2 != 0 {
+		t.Fatalf("second run exit = %d\n%s", code2, out2)
+	}
+	st2, _ := os.Stat(cachePath)
+	if !st1.ModTime().Equal(st2.ModTime()) {
+		t.Errorf("cache rewritten on hit: %v -> %v", st1.ModTime(), st2.ModTime())
+	}
+	// --no-cache must still produce a correct result.
+	out3, code3 := runCLI(t, "verify", "--no-cache")
+	if code3 != 0 {
+		t.Fatalf("no-cache run exit = %d\n%s", code3, out3)
+	}
+	if !strings.Contains(out3, "architecture OK") {
+		t.Errorf("no-cache output:\n%s", out3)
+	}
+}

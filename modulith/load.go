@@ -79,6 +79,7 @@ func packageFrom(p *packages.Package, baseDir string) *Package {
 		imports[path] = true
 	}
 	out.Imports = sortedKeys(imports)
+	out.GoFiles = append([]string(nil), p.GoFiles...)
 
 	// Collect exported type names when type information is available.
 	if p.Types != nil {
