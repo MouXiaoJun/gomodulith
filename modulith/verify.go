@@ -45,6 +45,16 @@ const (
 	// CodeInvalidPublicAPI is a declared public API package that does not
 	// exist or does not belong to the module.
 	CodeInvalidPublicAPI IssueCode = "invalid-public-api"
+	// CodeMissingPublishedEvent is a declared published event type that does
+	// not exist anywhere in the publishing module.
+	CodeMissingPublishedEvent IssueCode = "missing-published-event"
+	// CodeEventDrivenViolation is an import into another module's non-event
+	// package while the source module declared event-driven interaction with
+	// it.
+	CodeEventDrivenViolation IssueCode = "event-driven-violation"
+	// CodeEventPackageMissing warns that a module declared event-driven
+	// towards a module that has no event packages.
+	CodeEventPackageMissing IssueCode = "event-package-missing"
 )
 
 // Issue is a single architecture finding.
@@ -136,6 +146,7 @@ func (a *Application) Verify() (*Result, error) {
 	issues = append(issues, checkDependencyRules(g)...)
 	issues = append(issues, a.checkPublicAPIDeclarations()...)
 	issues = append(issues, a.checkMissingPublicAPI()...)
+	issues = append(issues, a.checkEventRules()...)
 	issues = append(issues, a.checkOrphans()...)
 
 	for _, c := range cycles {
@@ -183,9 +194,9 @@ func (a *Application) checkCrossModulePrivateAccess() []*Issue {
 			}
 			if fromMod == nil {
 				// An unclassified package reaching into a module's private
-				// packages is a warning; its public packages are acceptable
-				// entry points.
-				if !toMod.IsPublicPackage(toPath) {
+				// packages is a warning; its public surface (public API or
+				// event packages) is acceptable entry points.
+				if !a.isPublicSurface(toMod, toPath) {
 					issues = append(issues, &Issue{
 						Code:     CodeCrossModulePrivate,
 						Severity: SeverityWarning,
@@ -200,7 +211,7 @@ func (a *Application) checkCrossModulePrivateAccess() []*Issue {
 			if fromMod == toMod {
 				continue // intra-module
 			}
-			if !toMod.IsPublicPackage(toPath) {
+			if !a.isPublicSurface(toMod, toPath) {
 				issues = append(issues, &Issue{
 					Code:     CodeCrossModulePrivate,
 					Severity: SeverityError,

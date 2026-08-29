@@ -3,6 +3,7 @@ package modulith
 import (
 	"context"
 	"fmt"
+	"go/types"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -78,7 +79,32 @@ func packageFrom(p *packages.Package, baseDir string) *Package {
 		imports[path] = true
 	}
 	out.Imports = sortedKeys(imports)
+
+	// Collect exported type names when type information is available.
+	if p.Types != nil {
+		scope := p.Types.Scope()
+		var typeNames []string
+		for _, name := range scope.Names() {
+			if !isExported(name) {
+				continue
+			}
+			if _, ok := scope.Lookup(name).(*types.TypeName); ok {
+				typeNames = append(typeNames, name)
+			}
+		}
+		sort.Strings(typeNames)
+		out.ExportedTypes = typeNames
+	}
 	return out
+}
+
+// isExported reports whether a Go identifier is exported (starts with an
+// uppercase letter).
+func isExported(name string) bool {
+	if name == "" {
+		return false
+	}
+	return name[0] >= 'A' && name[0] <= 'Z'
 }
 
 // hasGoFiles reports whether dir contains (recursively) any .go files.

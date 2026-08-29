@@ -57,3 +57,22 @@ jobs:
       - name: Architecture diff vs main
         if: github.event_name == 'pull_request'
         run: gomodulith diff "origin/${{ github.base_ref }}" "HEAD"
+
+      # Keep the architecture contract and graph in sync with the code and
+      # publish them as build artifacts for humans and AI coding agents.
+      - name: Generate architecture contract
+        run: gomodulith contract
+
+      - name: Export architecture graph
+        run: |
+          gomodulith export --format mermaid --out architecture.mmd
+          gomodulith export --format dot --out architecture.dot
+
+      - name: Upload architecture docs
+        uses: actions/upload-artifact@v4
+        with:
+          name: architecture
+          path: |
+            .gomodulith/architecture.md
+            architecture.mmd
+            architecture.dot

@@ -455,3 +455,74 @@ report_orphans = true
 		t.Errorf("output:\n%s", out)
 	}
 }
+
+func TestRunContract(t *testing.T) {
+	writeCLIFixture(t, cliHealthyFixture())
+	out, code := runCLI(t, "contract")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\n%s", code, out)
+	}
+	if !strings.Contains(out, "architecture contract written to") {
+		t.Errorf("output:\n%s", out)
+	}
+	doc, err := os.ReadFile(".gomodulith/architecture.md")
+	if err != nil {
+		t.Fatalf("read contract: %v", err)
+	}
+	for _, want := range []string{"# Architecture Contract", "### user", "### order", "## Rules", "## Verification status"} {
+		if !strings.Contains(string(doc), want) {
+			t.Errorf("contract missing %q:\n%s", want, doc)
+		}
+	}
+}
+
+func TestRunContractOut(t *testing.T) {
+	writeCLIFixture(t, cliHealthyFixture())
+	outPath := filepath.Join(t.TempDir(), "custom.md")
+	out, code := runCLI(t, "contract", "--out", outPath)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\n%s", code, out)
+	}
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if !strings.Contains(string(data), "# Architecture Contract") {
+		t.Errorf("content:\n%s", data)
+	}
+}
+
+func TestRunExportDot(t *testing.T) {
+	writeCLIFixture(t, cliHealthyFixture())
+	out, code := runCLI(t, "export", "--format", "dot")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\n%s", code, out)
+	}
+	if !strings.Contains(out, "digraph modules {") {
+		t.Errorf("dot output:\n%s", out)
+	}
+	if !strings.Contains(out, `"user" [label="user"];`) {
+		t.Errorf("dot output:\n%s", out)
+	}
+}
+
+func TestRunVerifyEventConfig(t *testing.T) {
+	// order publishes an event that does not exist -> missing-published-event
+	// via .gomodulith.yaml rules.
+	files := map[string]string{
+		"internal/order/api/api.go": cliFile("api", nil),
+		".gomodulith.yaml": `modules:
+  order:
+    patterns: ["./internal/order/..."]
+    publish_events: ["OrderPlaced"]
+`,
+	}
+	writeCLIFixture(t, files)
+	out, code := runCLI(t, "verify")
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1\n%s", code, out)
+	}
+	if !strings.Contains(out, "missing-published-event") {
+		t.Errorf("expected missing-published-event:\n%s", out)
+	}
+}

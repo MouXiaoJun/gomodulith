@@ -32,6 +32,9 @@ type FileConfig struct {
 	// APIElement overrides the public-API sub-package element.
 	APIElement string `yaml:"api_element" toml:"api_element"`
 
+	// EventElement overrides the event sub-package element.
+	EventElement string `yaml:"event_element" toml:"event_element"`
+
 	// ReportOrphans enables the orphan-package warning.
 	ReportOrphans bool `yaml:"report_orphans" toml:"report_orphans"`
 
@@ -60,6 +63,13 @@ type ModuleConfig struct {
 
 	// Forbidden are the module names this module may not depend on.
 	Forbidden []string `yaml:"forbidden" toml:"forbidden"`
+
+	// PublishEvents are the event type names this module publishes.
+	PublishEvents []string `yaml:"publish_events" toml:"publish_events"`
+
+	// EventDrivenFrom are module names this module may interact with only
+	// through their event packages.
+	EventDrivenFrom []string `yaml:"event_driven_from" toml:"event_driven_from"`
 }
 
 // configFileNames are the recognised configuration file names, in discovery
@@ -151,6 +161,9 @@ func (fc *FileConfig) config() Config {
 	if fc.APIElement != "" {
 		cfg.APIElement = fc.APIElement
 	}
+	if fc.EventElement != "" {
+		cfg.EventElement = fc.EventElement
+	}
 	cfg.ReportOrphans = fc.ReportOrphans
 	cfg.PublicAPIRequired = fc.PublicAPIRequired
 	return cfg
@@ -196,6 +209,12 @@ func (fc *FileConfig) Build(ctx context.Context, dir string, patterns []string) 
 		app.ModuleRules(n).ForbidDependencies(mc.Forbidden...)
 		if len(mc.Public) > 0 {
 			app.ModuleRules(n).Public(mc.Public...)
+		}
+		if len(mc.PublishEvents) > 0 {
+			app.ModuleRules(n).PublishEvents(mc.PublishEvents...)
+		}
+		if len(mc.EventDrivenFrom) > 0 {
+			app.ModuleRules(n).EventDrivenFrom(mc.EventDrivenFrom...)
 		}
 	}
 	if err := LoadExplicitIn(ctx, dir, app, patterns...); err != nil {

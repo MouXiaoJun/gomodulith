@@ -14,11 +14,11 @@ import (
 // runExport implements `gomodulith export`.
 func runExport(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("export", flag.ExitOnError)
-	format := fs.String("format", "json", "output format: json, sarif, mermaid, d2")
+	format := fs.String("format", "json", "output format: json, sarif, mermaid, d2, dot")
 	verify := fs.Bool("verify", false, "include verification findings in the JSON/SARIF model")
 	outFile := fs.String("out", "", "write output to this file instead of stdout")
 	fs.Usage = func() {
-		fmt.Fprint(stderr, "Usage: gomodulith export [patterns...] [--format json|sarif|mermaid|d2] [--verify] [--out <file>]\n")
+		fmt.Fprint(stderr, "Usage: gomodulith export [patterns...] [--format json|sarif|mermaid|d2|dot] [--verify] [--out <file>]\n")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -57,8 +57,10 @@ func runExport(args []string, stdout, stderr io.Writer) int {
 		output = []byte(app.ExportMermaid())
 	case "d2":
 		output = []byte(app.ExportD2())
+	case "dot":
+		output = []byte(app.ExportDOT())
 	default:
-		fmt.Fprintf(stderr, "gomodulith export: unknown format %q (want json, sarif, mermaid or d2)\n", *format)
+		fmt.Fprintf(stderr, "gomodulith export: unknown format %q (want json, sarif, mermaid, d2 or dot)\n", *format)
 		return 2
 	}
 

@@ -20,7 +20,7 @@ import (
 	"github.com/MouXiaoJun/gomodulith/modulith"
 )
 
-const version = "0.4.0"
+const version = "0.5.0"
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
@@ -45,6 +45,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runExplain(rest, stdout, stderr)
 	case "export":
 		return runExport(rest, stdout, stderr)
+	case "contract":
+		return runContract(rest, stdout, stderr)
 	case "diff":
 		return runDiff(rest, stdout, stderr)
 	case "version", "--version", "-v":
@@ -71,6 +73,7 @@ Commands:
   graph     Render the discovered module graph.
   explain   Explain a module's public API, dependencies and dependents.
   export    Export an AI/CI-readable architecture model.
+  contract  Write the architecture contract for AI coding agents.
   diff      Show architecture changes between two exported models.
 
 Run "gomodulith <command> -h" for command-specific options.

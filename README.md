@@ -17,6 +17,8 @@ It is inspired by the ideas behind Spring Modulith and architecture-testing tool
 - **Architecture diffing** — compare two exported models — or two git revisions — and report exactly what changed.
 - **SARIF output** — export verification findings as SARIF 2.1.0 for GitHub code scanning.
 - **Project configuration** — configure discovery and dependency rules from a `.gomodulith.yaml` or `.gomodulith.toml` file, auto-discovered by the CLI.
+- **Event-driven rules** — declare published events and event-only boundaries between modules.
+- **AI agent contract** — generate a Markdown architecture contract (`.gomodulith/architecture.md`) that AI coding agents read before writing code.
 
 ## Installation
 
@@ -106,6 +108,27 @@ func TestArchitecture(t *testing.T) {
 
 In explicit mode, a module without declared `AllowDependencies` is **closed** by default: any module dependency it has is reported as undeclared.
 
+### Event-driven interaction rules
+
+For modules that should be decoupled beyond API boundaries, gomodulith can
+enforce **event-driven interaction**. A module's `events` packages (configurable
+via `EventElement`, default `events`) are treated as public interaction
+surfaces alongside `api` packages.
+
+```go
+app.ModuleRules("user").PublishEvents("UserRegistered", "UserDeleted")
+app.ModuleRules("notifications").AllowDependencies("user").EventDrivenFrom("user")
+```
+
+- `PublishEvents` declares the event types a module publishes; each must exist
+  as an exported type in the module, otherwise `missing-published-event` is
+  reported.
+- `EventDrivenFrom("user")` means the module may import **only** `user`'s event
+  packages; any import of `user`'s other packages is an
+  `event-driven-violation`.
+- If the target module has no event packages at all, `event-package-missing`
+  warns that event interaction is impossible.
+
 ### Pure API
 
 The library API does not depend on `testing` and can be used from tools, CI, and build scripts:
@@ -134,7 +157,8 @@ mermaid := app.ExportMermaid()        // graph documentation
 gomodulith verify [patterns...] [--json|--sarif] [--out <file>]   # verify boundaries and rules (exit 1 on violation)
 gomodulith graph [--format text|mermaid|json|d2]                  # render the module graph
 gomodulith explain <module>                                       # explain a module's API, dependencies and dependents
-gomodulith export [--verify] [--format json|sarif|mermaid|d2] [--out <file>]  # export the architecture model
+gomodulith export [--verify] [--format json|sarif|mermaid|d2|dot] [--out <file>]  # export the architecture model
+gomodulith contract [--out <path>]                                # write the AI-agent architecture contract
 gomodulith diff <base> <head>                                     # show architecture changes between two states
 ```
 
@@ -173,6 +197,9 @@ A complete, copy-paste workflow is provided in [`examples/architecture-ci.yml`](
 | `cycle` | error | Cyclic module dependencies |
 | `invalid-public-api` | error | A declared public API package does not exist or belongs to another module |
 | `missing-public-api` | warning | A module has no public API package (error when `PublicAPIRequired` is set) |
+| `missing-published-event` | error | A declared published event type does not exist in the module |
+| `event-driven-violation` | error | A module declared event-driven towards another module imports a non-event package of it |
+| `event-package-missing` | warning | A module is event-driven towards a module that has no event packages |
 | `orphan-package` | warning | A package is not part of any module (opt-in via `ReportOrphans`) |
 
 ## Configuration
@@ -200,6 +227,7 @@ For teams, the same settings plus module rules can live in a checked-in
 # .gomodulith.yaml
 module_root: internal            # optional; defaults to "internal"
 api_element: api                 # optional; defaults to "api"
+event_element: events            # optional; defaults to "events"
 report_orphans: false
 public_api_required: false
 patterns: ["./..."]              # default load patterns when none are given
@@ -207,11 +235,16 @@ patterns: ["./..."]              # default load patterns when none are given
 modules:                         # optional: enables explicit rule mode
   user:
     patterns: ["./internal/user/..."]
+    publish_events: ["UserRegistered"]
   order:
     patterns: ["./internal/order/..."]
     allowed: ["user"]            # order may depend on user
     forbidden: ["billing"]
     public: ["./internal/order/api"]
+  notifications:
+    patterns: ["./internal/notifications/..."]
+    allowed: ["user"]
+    event_driven_from: ["user"]  # only user's events packages may be imported
 ```
 
 ```toml
@@ -226,12 +259,36 @@ patterns = ["./internal/user/..."]
 [modules.order]
 patterns = ["./internal/order/..."]
 allowed = ["user"]
+publish_events = ["OrderPlaced"]
 ```
 
 When `modules` is empty, the file only adjusts convention discovery. When it
 declares modules, the application runs in explicit rule mode (as in the
 programmatic `New()` API). The library exposes the same configuration through
 `modulith.LoadConfigFile` / `modulith.ParseConfig` / `FileConfig.Build`.
+
+### AI-agent architecture contract
+
+AI coding agents should not have to reverse-engineer the architecture from
+code. `gomodulith contract` writes a Markdown contract describing every
+module's public API, dependency rules, published events and verification
+status:
+
+```bash
+gomodulith contract          # writes .gomodulith/architecture.md
+```
+
+The contract starts with "Architecture Contract" and lists, per module, what
+other code may and may not do with it, plus the current verification status.
+Point your agent (Cursor, Claude Code, ...) at this file, e.g. by mentioning it
+in your `AGENTS.md`:
+
+```markdown
+Before modifying code, read `.gomodulith/architecture.md` and follow the
+architecture rules it describes.
+```
+
+From Go, use `app.ExportContract()`.
 
 ### Analysing another directory or git revision
 
@@ -284,8 +341,16 @@ ready for GitHub code scanning and similar consumers. Use it from Go, or via
 - [x] git-revision diffing (`gomodulith diff <ref> <ref>`)
 - [x] SARIF output for GitHub code scanning
 - [x] YAML/TOML project configuration files
-- [ ] event-based module interaction rules
-- [ ] architecture contract checks for AI coding agents in-repo (`.gomodulith/`)
+
+### v0.5 — Events, agents and ergonomics ✅
+
+- [x] event-based module interaction rules (`PublishEvents`, `EventDrivenFrom`)
+- [x] architecture contract for AI coding agents (`gomodulith contract` → `.gomodulith/architecture.md`)
+- [x] Graphviz DOT graph export (`export --format dot`)
+- [x] directory-aware test helpers (`ScanDir` / `ScanDirWithConfig`)
+- [x] CI workflow now publishes the contract and graphs as artifacts
+- [ ] IDE/editor diagnostics (LSP-style) for violations
+- [ ] incremental caching for large repositories
 
 ## Project philosophy
 

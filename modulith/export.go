@@ -175,6 +175,24 @@ func (a *Application) ExportD2() string {
 	return b.String()
 }
 
+// ExportDOT renders the module graph in Graphviz DOT syntax, suitable for
+// rendering with `dot` or `neato`.
+func (a *Application) ExportDOT() string {
+	g := a.BuildGraph()
+	var b strings.Builder
+	b.WriteString("digraph modules {\n")
+	b.WriteString("  rankdir=LR;\n")
+	b.WriteString("  node [shape=box];\n")
+	for _, m := range a.modules {
+		fmt.Fprintf(&b, "  %q [label=%q];\n", sanitizeID(m.Name), m.Name)
+	}
+	for _, d := range g.Dependencies {
+		fmt.Fprintf(&b, "  %q -> %q;\n", sanitizeID(d.From.Name), sanitizeID(d.To.Name))
+	}
+	b.WriteString("}\n")
+	return b.String()
+}
+
 // detectModulePath returns the Go module path from the go.mod in the working
 // directory, or "" when it cannot be determined.
 func detectModulePath(a *Application) string {

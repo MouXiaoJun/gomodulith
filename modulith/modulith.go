@@ -33,6 +33,11 @@ type Config struct {
 	// defaults to "internal".
 	InternalElement string
 
+	// EventElement is the name of the sub-directory (or sub-package element)
+	// that marks a module's event packages — the packages through which
+	// event-driven interaction is allowed. It defaults to "events".
+	EventElement string
+
 	// ReportOrphans enables the "orphan package" warning for packages that
 	// are not classified into any module. Disabled by default because many
 	// projects intentionally keep packages such as cmd/ or pkg/ outside of
@@ -50,6 +55,7 @@ func NewConfig() Config {
 		ModuleRoot:      ModuleRootDefault,
 		APIElement:      "api",
 		InternalElement: "internal",
+		EventElement:    "events",
 		ReportOrphans:   false,
 	}
 }
@@ -61,6 +67,10 @@ type Package struct {
 	Dir     string   // source directory on disk
 	RelDir  string   // directory relative to the working directory
 	Imports []string // sorted, de-duplicated import paths
+
+	// ExportedTypes lists the exported type names declared by the package,
+	// sorted. Populated when type information is available.
+	ExportedTypes []string
 }
 
 // Module is a single application module in the architecture model.
@@ -88,6 +98,15 @@ type Module struct {
 	// ForbiddenDependencies are the names of modules this module may not
 	// depend on.
 	ForbiddenDependencies []string
+
+	// PublishedEvents are the names of the event types the module publishes.
+	// Each must exist as an exported type within the module.
+	PublishedEvents []string
+
+	// EventDrivenModules are the names of modules with which this module may
+	// interact only through events: imports into those modules must target
+	// their event packages.
+	EventDrivenModules []string
 
 	pkgs map[string]*Package
 }
@@ -200,6 +219,9 @@ func NewWithConfig(cfg Config) *Application {
 	if cfg.InternalElement == "" {
 		cfg.InternalElement = "internal"
 	}
+	if cfg.EventElement == "" {
+		cfg.EventElement = "events"
+	}
 	wd, _ := os.Getwd()
 	return &Application{
 		config: cfg,
@@ -281,6 +303,31 @@ func (m *Module) Public(paths ...string) *Module {
 	for _, p := range paths {
 		if !contains(m.PublicPackages, p) {
 			m.PublicPackages = append(m.PublicPackages, p)
+		}
+	}
+	return m
+}
+
+// PublishEvents declares the names of the event types this module publishes.
+// Each name must exist as an exported type within the module; otherwise the
+// verification reports a missing-published-event error. Returns the module for
+// chaining.
+func (m *Module) PublishEvents(names ...string) *Module {
+	for _, n := range names {
+		if !contains(m.PublishedEvents, n) {
+			m.PublishedEvents = append(m.PublishedEvents, n)
+		}
+	}
+	return m
+}
+
+// EventDrivenFrom declares that this module may interact with the named
+// modules only through events: every import into those modules must target one
+// of their event packages. Returns the module for chaining.
+func (m *Module) EventDrivenFrom(modules ...string) *Module {
+	for _, n := range modules {
+		if !contains(m.EventDrivenModules, n) {
+			m.EventDrivenModules = append(m.EventDrivenModules, n)
 		}
 	}
 	return m

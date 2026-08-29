@@ -80,13 +80,16 @@ type sarifLogicalLocation struct {
 // ruleDescriptions maps each issue code to its human-readable description,
 // used to build the SARIF rule index.
 var ruleDescriptions = map[IssueCode]string{
-	CodeCrossModulePrivate:   "A module imports another module's private (non-API) package instead of its public API.",
-	CodeUndeclaredDependency: "A module depends on a module that is not declared in its allowed dependencies.",
-	CodeForbiddenDependency:  "A module depends on a module that is explicitly forbidden.",
-	CodeCycle:                "Cyclic module dependency detected.",
-	CodeOrphanPackage:        "A package is not part of any module.",
-	CodeMissingPublicAPI:     "A module has no public API package.",
-	CodeInvalidPublicAPI:     "A declared public API package does not exist or does not belong to the module.",
+	CodeCrossModulePrivate:    "A module imports another module's private (non-API) package instead of its public API.",
+	CodeUndeclaredDependency:  "A module depends on a module that is not declared in its allowed dependencies.",
+	CodeForbiddenDependency:   "A module depends on a module that is explicitly forbidden.",
+	CodeCycle:                 "Cyclic module dependency detected.",
+	CodeOrphanPackage:         "A package is not part of any module.",
+	CodeMissingPublicAPI:      "A module has no public API package.",
+	CodeInvalidPublicAPI:      "A declared public API package does not exist or does not belong to the module.",
+	CodeMissingPublishedEvent: "A module declares a published event type that does not exist in the module.",
+	CodeEventDrivenViolation:  "A module declared event-driven towards another module but imports a non-event package of it.",
+	CodeEventPackageMissing:   "A module is event-driven towards a module that has no event packages.",
 }
 
 // ExportSARIF returns the verification findings as a SARIF 2.1.0 document,
@@ -117,7 +120,7 @@ func (a *Application) ExportSARIF() ([]byte, error) {
 					Driver: sarifDriver{
 						Name:            "gomodulith",
 						InformationURI:  "https://github.com/MouXiaoJun/gomodulith",
-						SemanticVersion: "0.4.0",
+						SemanticVersion: Version,
 						Rules:           make([]sarifRule, 0, len(ruleIDs)),
 					},
 				},

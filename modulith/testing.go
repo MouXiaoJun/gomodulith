@@ -32,6 +32,28 @@ func ScanWithConfig(t testing.TB, cfg Config, patterns ...string) *Application {
 	return app
 }
 
+// ScanDir is like Scan but scans the given directory instead of the process
+// working directory (which it does not change). It is useful when a test must
+// analyse another checkout or a revision stored elsewhere.
+func ScanDir(t testing.TB, dir string, patterns ...string) *Application {
+	t.Helper()
+	app, err := LoadIn(context.Background(), dir, patterns...)
+	if err != nil {
+		t.Fatalf("modulith: %v", err)
+	}
+	return app
+}
+
+// ScanDirWithConfig is like ScanDir but uses the supplied configuration.
+func ScanDirWithConfig(t testing.TB, dir string, cfg Config, patterns ...string) *Application {
+	t.Helper()
+	app := NewWithConfig(cfg)
+	if err := app.loadIn(context.Background(), dir, patterns); err != nil {
+		t.Fatalf("modulith: %v", err)
+	}
+	return app
+}
+
 // NewTest returns an explicit-mode Application and loads it with the given
 // patterns, failing the test on error:
 //
