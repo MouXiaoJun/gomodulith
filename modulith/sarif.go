@@ -80,16 +80,18 @@ type sarifLogicalLocation struct {
 // ruleDescriptions maps each issue code to its human-readable description,
 // used to build the SARIF rule index.
 var ruleDescriptions = map[IssueCode]string{
-	CodeCrossModulePrivate:    "A module imports another module's private (non-API) package instead of its public API.",
-	CodeUndeclaredDependency:  "A module depends on a module that is not declared in its allowed dependencies.",
-	CodeForbiddenDependency:   "A module depends on a module that is explicitly forbidden.",
-	CodeCycle:                 "Cyclic module dependency detected.",
-	CodeOrphanPackage:         "A package is not part of any module.",
-	CodeMissingPublicAPI:      "A module has no public API package.",
-	CodeInvalidPublicAPI:      "A declared public API package does not exist or does not belong to the module.",
-	CodeMissingPublishedEvent: "A module declares a published event type that does not exist in the module.",
-	CodeEventDrivenViolation:  "A module declared event-driven towards another module but imports a non-event package of it.",
-	CodeEventPackageMissing:   "A module is event-driven towards a module that has no event packages.",
+	CodeCrossModulePrivate:     "A module imports another module's private (non-API) package instead of its public API.",
+	CodeUndeclaredDependency:   "A module depends on a module that is not declared in its allowed dependencies.",
+	CodeForbiddenDependency:    "A module depends on a module that is explicitly forbidden.",
+	CodeCycle:                  "Cyclic module dependency detected.",
+	CodeOrphanPackage:          "A package is not part of any module.",
+	CodeMissingPublicAPI:       "A module has no public API package.",
+	CodeInvalidPublicAPI:       "A declared public API package does not exist or does not belong to the module.",
+	CodeMissingPublishedEvent:  "A module declares a published event type that does not exist in the module.",
+	CodeEventDrivenViolation:   "A module declared event-driven towards another module but imports a non-event package of it.",
+	CodeEventPackageMissing:    "A module is event-driven towards a module that has no event packages.",
+	CodeCrossModuleTypeLeakage: "A module's public surface exposes a type defined in another module's private packages.",
+	CodeInternalAPITypeLeakage: "A module's public surface exposes a type defined in its own private packages.",
 }
 
 // ExportSARIF returns the verification findings as a SARIF 2.1.0 document,

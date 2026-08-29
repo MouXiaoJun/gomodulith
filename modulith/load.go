@@ -81,7 +81,8 @@ func packageFrom(p *packages.Package, baseDir string) *Package {
 	out.Imports = sortedKeys(imports)
 	out.GoFiles = append([]string(nil), p.GoFiles...)
 
-	// Collect exported type names when type information is available.
+	// Collect exported type names and API type references when type
+	// information is available.
 	if p.Types != nil {
 		scope := p.Types.Scope()
 		var typeNames []string
@@ -95,6 +96,7 @@ func packageFrom(p *packages.Package, baseDir string) *Package {
 		}
 		sort.Strings(typeNames)
 		out.ExportedTypes = typeNames
+		out.APITypeRefs = collectAPITypeRefs(p.Types)
 	}
 	return out
 }

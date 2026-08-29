@@ -506,6 +506,44 @@ func TestRunExportDot(t *testing.T) {
 	}
 }
 
+func TestRunVerifyTypeLeakage(t *testing.T) {
+	// order.api exposes order's own internal type -> internal-api-leakage.
+	files := map[string]string{
+		"internal/user/api/api.go":       cliFile("api", nil),
+		"internal/user/domain/dom.go":    cliFile("domain", nil),
+		"internal/order/api/api.go":      "package api\n\nimport \"" + cliFixtureModule + "/internal/order/domain\"\n\ntype OrderDTO struct {\n\tOrder domain.Order\n}\n",
+		"internal/order/domain/dom.go":   "package domain\n\ntype Order struct{}\n",
+		"internal/payment/api/api.go":    cliFile("api", []string{cliFixtureModule + "/internal/order/api"}),
+		"internal/payment/domain/dom.go": cliFile("domain", nil),
+	}
+	writeCLIFixture(t, files)
+	out, code := runCLI(t, "verify", "--json")
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1\n%s", code, out)
+	}
+	if !strings.Contains(out, "internal-api-leakage") {
+		t.Errorf("expected internal-api-leakage:\n%s", out)
+	}
+}
+
+func TestRunVerifyNoTypeLeakage(t *testing.T) {
+	// order.api referencing user's public API type is allowed.
+	files := map[string]string{
+		"internal/user/api/api.go":     "package api\n\ntype User struct{}\n",
+		"internal/user/domain/dom.go":  cliFile("domain", nil),
+		"internal/order/api/api.go":    "package api\n\nimport \"" + cliFixtureModule + "/internal/user/api\"\n\nfunc Find(u api.User) {}\n",
+		"internal/order/domain/dom.go": cliFile("domain", nil),
+	}
+	writeCLIFixture(t, files)
+	out, code := runCLI(t, "verify")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\n%s", code, out)
+	}
+	if strings.Contains(out, "leakage") {
+		t.Errorf("unexpected leakage:\n%s", out)
+	}
+}
+
 func TestRunVerifyEventConfig(t *testing.T) {
 	// order publishes an event that does not exist -> missing-published-event
 	// via .gomodulith.yaml rules.

@@ -7,7 +7,7 @@ import (
 )
 
 // Version is the gomodulith library version.
-const Version = "0.6.0"
+const Version = "0.7.0"
 
 // ContractHeader is the heading used at the top of generated contracts. Tools
 // can rely on it to detect a gomodulith-generated contract.
@@ -95,7 +95,8 @@ func (a *Application) ExportContract() ([]byte, error) {
 	fmt.Fprintf(&b, "3. A module must only depend on its allowed dependencies; forbidden dependencies are never allowed.\n")
 	fmt.Fprintf(&b, "4. Event-driven modules may import the target module's event packages only.\n")
 	fmt.Fprintf(&b, "5. Module dependencies must be acyclic.\n")
-	fmt.Fprintf(&b, "6. Published event types must exist in the publishing module.\n\n")
+	fmt.Fprintf(&b, "6. Published event types must exist in the publishing module.\n")
+	fmt.Fprintf(&b, "7. Public surfaces (public API and event packages) must not expose types from private packages — neither this module's own nor another module's.\n\n")
 
 	res, err := a.Verify()
 	if err != nil {

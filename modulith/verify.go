@@ -55,6 +55,14 @@ const (
 	// CodeEventPackageMissing warns that a module declared event-driven
 	// towards a module that has no event packages.
 	CodeEventPackageMissing IssueCode = "event-package-missing"
+	// CodeCrossModuleTypeLeakage is a module's public surface exposing a type
+	// defined in another module's private packages. Consumers of the API cannot
+	// name that type without reaching into the other module's internals.
+	CodeCrossModuleTypeLeakage IssueCode = "cross-module-type-leakage"
+	// CodeInternalAPITypeLeakage is a module's public surface exposing a type
+	// defined in the module's own private packages, coupling internals into the
+	// public contract.
+	CodeInternalAPITypeLeakage IssueCode = "internal-api-leakage"
 )
 
 // Issue is a single architecture finding.
@@ -143,6 +151,7 @@ func (a *Application) Verify() (*Result, error) {
 	var issues []*Issue
 
 	issues = append(issues, a.checkCrossModulePrivateAccess()...)
+	issues = append(issues, a.checkTypeLeakage()...)
 	issues = append(issues, checkDependencyRules(g)...)
 	issues = append(issues, a.checkPublicAPIDeclarations()...)
 	issues = append(issues, a.checkMissingPublicAPI()...)

@@ -21,6 +21,7 @@ It is inspired by the ideas behind Spring Modulith and architecture-testing tool
 - **AI agent contract** — generate a Markdown architecture contract (`.gomodulith/architecture.md`) that AI coding agents read before writing code.
 - **LSP-style diagnostics** — emit violations as LSP diagnostics (`verify --lsp`) for editors and language servers.
 - **Incremental caching** — cache the loaded model on disk so repeated `verify` runs skip the expensive `go/packages` load.
+- **Type-level API analysis** — detect public surfaces that expose private types, as a symbol-level architecture smell.
 
 ## Installation
 
@@ -202,6 +203,8 @@ A complete, copy-paste workflow is provided in [`examples/architecture-ci.yml`](
 | `missing-published-event` | error | A declared published event type does not exist in the module |
 | `event-driven-violation` | error | A module declared event-driven towards another module imports a non-event package of it |
 | `event-package-missing` | warning | A module is event-driven towards a module that has no event packages |
+| `cross-module-type-leakage` | error | A public surface exposes a type defined in another module's private packages |
+| `internal-api-leakage` | error | A public surface exposes a type defined in the module's own private packages |
 | `orphan-package` | warning | A package is not part of any module (opt-in via `ReportOrphans`) |
 
 ## Configuration
@@ -347,6 +350,34 @@ gomodulith verify --no-cache # bypass the cache
 From Go, use `LoadCachedIn` / `LoadExplicitCached` with your own cache
 directory.
 
+### Type-level API analysis
+
+Beyond import boundaries, `gomodulith` inspects the **types** a module's public
+surface (public API and event packages) exposes, using `go/types`. Two checks
+catch API design defects that import-level checks cannot see:
+
+```go
+// internal/order/api/api.go — order's public API exposes order's internal type
+type OrderDTO struct {
+    Order domain.Order // domain is order's private package
+}
+// -> internal-api-leakage: external consumers cannot name domain.Order
+```
+
+```go
+// internal/order/events/events.go — order's event payload carries user's private type
+type OrderPlaced struct {
+    By domain.UserID // user/domain is user's private package
+}
+// -> cross-module-type-leakage: subscribers cannot construct the event
+```
+
+A public surface may only reference types that live in a public surface: its
+own public/event packages, or another module's public/event packages. Leaking a
+private type makes the API unusable from outside and couples internals into the
+public contract. Use `app.PackageByID("…").APITypeRefs` to inspect what a package
+exposes.
+
 ## Roadmap
 
 ### v0.1 — Architecture model ✅
@@ -393,7 +424,13 @@ directory.
 
 - [x] LSP-style diagnostics (`verify --lsp` / `ExportDiagnostics`)
 - [x] incremental on-disk model cache (`verify` cache, `--no-cache`, `LoadCachedIn` / `LoadExplicitCached`)
-- [ ] interactive TUI / richer terminal reporting
+
+### v0.7 — Symbol-level architecture smell detection ✅
+
+- [x] type-level API analysis via `go/types` (exported API surface references)
+- [x] `cross-module-type-leakage` — public surfaces must not expose another module's private types
+- [x] `internal-api-leakage` — public surfaces must not expose the module's own private types (unusable from outside)
+- [ ] unused-event detection (published events nobody subscribes to)
 
 ## Project philosophy
 

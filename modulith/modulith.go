@@ -75,6 +75,17 @@ type Package struct {
 	// ExportedTypes lists the exported type names declared by the package,
 	// sorted. Populated when type information is available.
 	ExportedTypes []string
+
+	// APITypeRefs lists the types referenced by the package's exported API
+	// surface (exported functions and types). Each entry records the defining
+	// package and type name. Populated when type information is available.
+	APITypeRefs []TypeRef
+}
+
+// TypeRef identifies a type referenced by a package's API surface.
+type TypeRef struct {
+	Package string // import path of the defining package
+	Name    string // exported type name
 }
 
 // Module is a single application module in the architecture model.
