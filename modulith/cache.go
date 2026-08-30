@@ -8,14 +8,16 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
+
+	"golang.org/x/mod/modfile"
 )
 
 // cacheSchemaVersion is bumped whenever the on-disk cache format changes.
-const cacheSchemaVersion = 1
+const cacheSchemaVersion = 2
 
 // DefaultCacheDir is the directory, relative to the working directory, used
 // for the on-disk model cache when no explicit cache directory is given.
@@ -50,9 +52,9 @@ type cachedModel struct {
 // LoadCachedIn is like LoadIn but uses a disk cache under cacheDir (default
 // ".gomodulith/cache" relative to the working directory). When the cache
 // fingerprint matches the current source tree, the expensive go/packages load
-// is skipped and the cached model is reused. The cache is safe: it is keyed on
-// the contents of go.mod/go.sum, the Go toolchain version and the size+mtime
-// of every Go file.
+// is skipped and the cached model is reused. The key includes source contents
+// and the effective Go build environment. Unsupported build contexts (including
+// workspaces and local replacements) fall back to an uncached load.
 func LoadCachedIn(ctx context.Context, dir string, patterns []string, cacheDir string) (*Application, error) {
 	return LoadCachedWithConfigIn(ctx, dir, NewConfig(), patterns, cacheDir)
 }
@@ -60,14 +62,14 @@ func LoadCachedIn(ctx context.Context, dir string, patterns []string, cacheDir s
 // LoadCachedWithConfigIn is LoadCachedIn with an explicit configuration.
 func LoadCachedWithConfigIn(ctx context.Context, dir string, cfg Config, patterns []string, cacheDir string) (*Application, error) {
 	dir, cacheDir = resolveCacheDirs(dir, cacheDir)
-	if app, ok := tryLoadCache(cacheDir, dir, cfg, patterns, nil); ok {
+	if app, ok := tryLoadCache(ctx, cacheDir, dir, cfg, patterns, nil); ok {
 		return app, nil
 	}
 	app := NewWithConfig(cfg)
 	if err := app.loadIn(ctx, dir, patterns); err != nil {
 		return nil, err
 	}
-	saveCache(app, cacheDir, patterns, nil)
+	saveCache(ctx, app, cacheDir, patterns, nil)
 	return app, nil
 }
 
@@ -84,14 +86,14 @@ func LoadExplicitCached(ctx context.Context, dir string, a *Application, pattern
 	// Key defs are the declaration-time rules (package membership is filled in
 	// after loading, so it must not be part of the key).
 	keyDefs := a.ruleDefs()
-	if app, ok := tryLoadCache(cacheDir, dir, a.config, patterns, keyDefs); ok {
+	if app, ok := tryLoadCache(ctx, cacheDir, dir, a.config, patterns, keyDefs); ok {
 		a.restore(app)
 		return nil
 	}
 	if err := LoadExplicitIn(ctx, dir, a, patterns...); err != nil {
 		return err
 	}
-	saveCache(a, cacheDir, patterns, keyDefs)
+	saveCache(ctx, a, cacheDir, patterns, keyDefs)
 	return nil
 }
 
@@ -138,7 +140,7 @@ func (a *Application) cachedModuleDefs() []cachedModule {
 
 // tryLoadCache loads and validates the cache for the given key. It returns
 // (app, true) on a cache hit.
-func tryLoadCache(cacheDir, wd string, config Config, patterns []string, keyDefs []cachedModule) (*Application, bool) {
+func tryLoadCache(ctx context.Context, cacheDir, wd string, config Config, patterns []string, keyDefs []cachedModule) (*Application, bool) {
 	data, err := os.ReadFile(filepath.Join(cacheDir, "model.json"))
 	if err != nil {
 		return nil, false
@@ -150,7 +152,7 @@ func tryLoadCache(cacheDir, wd string, config Config, patterns []string, keyDefs
 	if cm.Schema != cacheSchemaVersion || cm.WD != wd {
 		return nil, false
 	}
-	fp, err := computeFingerprint(wd, config, patterns, keyDefs)
+	fp, err := computeFingerprint(ctx, wd, config, patterns, keyDefs)
 	if err != nil {
 		return nil, false
 	}
@@ -211,8 +213,8 @@ func (a *Application) restore(from *Application) {
 
 // saveCache writes the application state to the cache directory, ignoring
 // errors (the cache is an optimisation, never a correctness requirement).
-func saveCache(a *Application, cacheDir string, patterns []string, keyDefs []cachedModule) {
-	fp, err := computeFingerprint(a.wd, a.config, patterns, keyDefs)
+func saveCache(ctx context.Context, a *Application, cacheDir string, patterns []string, keyDefs []cachedModule) {
+	fp, err := computeFingerprint(ctx, a.wd, a.config, patterns, keyDefs)
 	if err != nil {
 		return
 	}
@@ -238,11 +240,68 @@ func saveCache(a *Application, cacheDir string, patterns []string, keyDefs []cac
 	_ = os.WriteFile(filepath.Join(cacheDir, "model.json"), data, 0o644)
 }
 
-// computeFingerprint hashes everything that determines the loaded model:
-// go.mod and go.sum contents, the Go toolchain version, the configuration,
-// the load patterns, the declared module rules, and the size+mtime of every Go
-// file under the working directory.
-func computeFingerprint(wd string, config Config, patterns []string, keyDefs []cachedModule) (string, error) {
+// computeFingerprint supports module-local source trees. If inputs outside
+// that tree cannot be tracked, returning an error disables cache reads/writes.
+func computeFingerprint(ctx context.Context, wd string, config Config, patterns []string, keyDefs []cachedModule) (string, error) {
+	cmd := exec.CommandContext(ctx, "go", "env", "-json")
+	cmd.Dir = wd
+	data, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	var env map[string]string
+	if err := json.Unmarshal(data, &env); err != nil {
+		return "", err
+	}
+	// GOGCCFLAGS contains a fresh temporary directory on every invocation;
+	// its build-relevant inputs are already present in the other env values.
+	delete(env, "GOGCCFLAGS")
+	root, err := filepath.EvalSymlinks(wd)
+	if err != nil {
+		return "", err
+	}
+	root, err = filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	modPath, err := filepath.EvalSymlinks(env["GOMOD"])
+	if err != nil {
+		return "", err
+	}
+	if modPath != filepath.Join(root, "go.mod") || (env["GOWORK"] != "" && env["GOWORK"] != "off") ||
+		strings.Contains(env["GOFLAGS"], "-overlay") || strings.Contains(env["GOFLAGS"], "-modfile") {
+		return "", fmt.Errorf("cache does not track this build context")
+	}
+	if _, err := os.Stat(filepath.Join(wd, "vendor")); !os.IsNotExist(err) {
+		return "", fmt.Errorf("cache does not track vendor trees")
+	}
+	if driver := os.Getenv("GOPACKAGESDRIVER"); driver != "off" {
+		_, err := exec.LookPath("gopackagesdriver")
+		if driver != "" || err == nil {
+			return "", fmt.Errorf("cache does not track external package drivers")
+		}
+	}
+	for _, pattern := range patterns {
+		if pattern != "." && !strings.HasPrefix(pattern, "./") {
+			return "", fmt.Errorf("cache requires module-local patterns")
+		}
+		if rel := filepath.Clean(pattern); rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return "", fmt.Errorf("cache requires module-local patterns")
+		}
+	}
+	modData, err := os.ReadFile(modPath)
+	if err != nil {
+		return "", err
+	}
+	mod, err := modfile.Parse(modPath, modData, nil)
+	if err != nil {
+		return "", err
+	}
+	for _, replacement := range mod.Replace {
+		if replacement.New.Version == "" {
+			return "", fmt.Errorf("cache does not track local replacement modules")
+		}
+	}
 	h := sha256.New()
 
 	write := func(s string) {
@@ -253,8 +312,15 @@ func computeFingerprint(wd string, config Config, patterns []string, keyDefs []c
 		if data, err := os.ReadFile(filepath.Join(wd, f)); err == nil {
 			write(f)
 			write(string(data))
+		} else if !os.IsNotExist(err) {
+			return "", err
 		}
 	}
+	buildEnv, err := json.Marshal(env)
+	if err != nil {
+		return "", err
+	}
+	write(string(buildEnv))
 	write(runtime.Version())
 	write(config.String())
 	for _, p := range patterns {
@@ -265,40 +331,38 @@ func computeFingerprint(wd string, config Config, patterns []string, keyDefs []c
 		write(string(enc))
 	}
 
-	// Every Go file under the working directory, excluding dot-directories and
-	// the cache itself.
-	var entries []string
-	_ = filepath.WalkDir(wd, func(path string, d fs.DirEntry, err error) error {
+	// WalkDir visits entries in lexical order. Read content rather than file
+	// metadata so restored mtimes and equal-sized edits still invalidate.
+	err = filepath.WalkDir(wd, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return nil
+			return err
 		}
 		if d.IsDir() {
-			name := d.Name()
-			if path != wd && (strings.HasPrefix(name, ".") || name == "vendor") {
+			if path != wd && d.Name() == ".git" {
 				return filepath.SkipDir
 			}
 			return nil
+		}
+		if d.Type()&fs.ModeSymlink != 0 {
+			return fmt.Errorf("cache does not track symlinked sources")
 		}
 		if !strings.HasSuffix(d.Name(), ".go") {
 			return nil
 		}
 		rel, rerr := filepath.Rel(wd, path)
 		if rerr != nil {
-			return nil
+			return rerr
 		}
-		if strings.HasPrefix(filepath.ToSlash(rel), DefaultCacheDir+"/") {
-			return nil
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
 		}
-		info, ierr := d.Info()
-		if ierr != nil {
-			return nil
-		}
-		entries = append(entries, fmt.Sprintf("%s:%d:%d", filepath.ToSlash(rel), info.Size(), info.ModTime().UnixNano()))
+		write(filepath.ToSlash(rel))
+		write(string(data))
 		return nil
 	})
-	sort.Strings(entries)
-	for _, e := range entries {
-		write(e)
+	if err != nil {
+		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }

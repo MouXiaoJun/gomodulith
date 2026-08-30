@@ -3,6 +3,7 @@ package modulith
 import (
 	"context"
 	"fmt"
+	"go/ast"
 	"go/types"
 	"io/fs"
 	"os"
@@ -104,10 +105,7 @@ func packageFrom(p *packages.Package, baseDir string) *Package {
 // isExported reports whether a Go identifier is exported (starts with an
 // uppercase letter).
 func isExported(name string) bool {
-	if name == "" {
-		return false
-	}
-	return name[0] >= 'A' && name[0] <= 'Z'
+	return ast.IsExported(name)
 }
 
 // hasGoFiles reports whether dir contains (recursively) any .go files.

@@ -169,3 +169,123 @@ func TestConfigStringStable(t *testing.T) {
 		t.Errorf("unexpected String(): %q", c.String())
 	}
 }
+
+func TestLoadCachedInBuildEnvironment(t *testing.T) {
+	for _, tt := range []struct{ name, before, after, tag string }{
+		{"GOFLAGS", "", "-tags=cache_extra", "cache_extra"},
+		{"GOOS", "darwin", "linux", "linux"},
+		{"GOARCH", "amd64", "arm64", "arm64"},
+		{"CGO_ENABLED", "0", "1", "cgo"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(tt.name, tt.before)
+			files := defaultFixture()
+			files["internal/order/domain/dom.go"] = goFile("domain", nil)
+			files["internal/order/domain/tagged.go"] = "//go:build " + tt.tag + "\n\n" + goFile("domain", []string{fixtureModule + "/internal/user/domain"})
+			dir := writeFixture(t, files)
+			before, err := LoadCachedIn(context.Background(), dir, []string{"./..."}, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, _ := before.Verify()
+			if result.HasCode(CodeCrossModulePrivate) {
+				t.Fatal("tagged violation must be inactive before environment change")
+			}
+			t.Setenv(tt.name, tt.after)
+			after, err := LoadCachedIn(context.Background(), dir, []string{"./..."}, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, _ = after.Verify()
+			if !result.HasCode(CodeCrossModulePrivate) {
+				t.Fatalf("cache hid violation after %s changed", tt.name)
+			}
+		})
+	}
+}
+
+func TestLoadCachedInContentChangeWithSameMetadata(t *testing.T) {
+	dir := writeFixture(t, defaultFixture())
+	path := filepath.Join(dir, "internal/order/domain/dom.go")
+	before := goFile("domain", []string{fixtureModule + "/internal/user/api"}) + "   "
+	after := goFile("domain", []string{fixtureModule + "/internal/user/domain"})
+	if len(before) != len(after) {
+		t.Fatal("fixture must preserve file size")
+	}
+	if err := os.WriteFile(path, []byte(before), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadCachedIn(context.Background(), dir, []string{"./..."}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(after), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	app, err := LoadCachedIn(context.Background(), dir, []string{"./..."}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, _ := app.Verify()
+	if !result.HasCode(CodeCrossModulePrivate) {
+		t.Fatal("same-size content change with restored mtime reused stale model")
+	}
+}
+
+func TestLoadCachedInExternalLocalSources(t *testing.T) {
+	for _, workspace := range []bool{false, true} {
+		name := "replace"
+		if workspace {
+			name = "workspace"
+		}
+		t.Run(name, func(t *testing.T) {
+			shared := t.TempDir()
+			if err := os.WriteFile(filepath.Join(shared, "go.mod"), []byte("module example.com/shared\ngo 1.21\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(shared, "shared.go")
+			if err := os.WriteFile(path, []byte("package shared\ntype Item struct{}\nfunc New() Item { return Item{} }\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			mod := "module " + fixtureModule + "\ngo 1.21\nrequire example.com/shared v0.0.0\n"
+			if !workspace {
+				mod += "replace example.com/shared => " + shared + "\n"
+			}
+			dir := writeFixture(t, map[string]string{
+				"go.mod":                    mod,
+				"internal/order/api/api.go": "package api\nimport \"example.com/shared\"\nvar Value = shared.New()\n",
+			})
+			if workspace {
+				work := filepath.Join(dir, "go.work")
+				if err := os.WriteFile(work, []byte("go 1.23\nuse (\n.\n"+shared+"\n)\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				t.Setenv("GOWORK", work)
+			}
+			if _, err := LoadCachedIn(context.Background(), dir, []string{"./..."}, ""); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte("package shared\ntype Other struct{}\nfunc New() Other { return Other{} }\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			app, err := LoadCachedIn(context.Background(), dir, []string{"./..."}, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, p := range app.Packages() {
+				for _, ref := range p.APITypeRefs {
+					if ref.Package == "example.com/shared" && ref.Name == "Other" {
+						return
+					}
+				}
+			}
+			t.Fatal("cache hid changed type from external local module")
+		})
+	}
+}

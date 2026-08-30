@@ -141,3 +141,83 @@ func TestPublicSurfaceReferenceAllowed(t *testing.T) {
 		t.Fatalf("unexpected leakage:\n%s", Report(res))
 	}
 }
+
+func TestUnicodeAPITypeLeakage(t *testing.T) {
+	for _, body := range []string{
+		"func Éxport() domain.Order { return domain.Order{} }",
+		"type Évent struct { Order domain.Order }",
+		"type Service struct{}; func (Service) Éxport() domain.Order { return domain.Order{} }",
+	} {
+		t.Run(body, func(t *testing.T) {
+			writeFixture(t, map[string]string{
+				"internal/order/domain/dom.go": "package domain\ntype Order struct{}\n",
+				"internal/order/api/api.go":    leakFile("api", []string{fixtureModule + "/internal/order/domain"}, body),
+			})
+			result, err := mustLoad(t, "./...").Verify()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !result.HasCode(CodeInternalAPITypeLeakage) {
+				t.Fatalf("Unicode exported symbol hid private type: %s", Report(result))
+			}
+		})
+	}
+}
+
+func TestGenericAPITypeArguments(t *testing.T) {
+	writeFixture(t, map[string]string{
+		"internal/order/domain/dom.go": "package domain\ntype Order struct{}\ntype ID string\n",
+		"internal/order/api/api.go": leakFile("api", []string{fixtureModule + "/internal/order/domain"}, `
+type Box[T any] struct { Value T }
+func First() Box[domain.Order] { return Box[domain.Order]{} }
+func Second() Box[[]domain.ID] { return Box[[]domain.ID]{} }
+`),
+	})
+	result, err := mustLoad(t, "./...").Verify()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"Order", "ID"} {
+		found := false
+		for _, issue := range result.Issues {
+			if issue.Code == CodeInternalAPITypeLeakage && strings.Contains(issue.Message, "domain."+name) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("generic argument domain.%s not reported: %s", name, Report(result))
+		}
+	}
+}
+
+func TestUnicodePublishedEvent(t *testing.T) {
+	writeFixture(t, map[string]string{
+		"internal/order/events/event.go": "package events\ntype Évent struct{}\n",
+	})
+	app := mustLoad(t, "./...")
+	app.ModuleRules("order").PublishEvents("Évent")
+	result, err := app.Verify()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.HasCode(CodeMissingPublishedEvent) {
+		t.Fatalf("Unicode event treated as missing: %s", Report(result))
+	}
+}
+
+func TestGenericAPIRecursiveConstraint(t *testing.T) {
+	writeFixture(t, map[string]string{
+		"internal/order/api/api.go": `package api
+type Node[T any] interface { Next() T }
+type Box[T Node[T]] struct { Value T }
+func Read[T Node[T]](box Box[T]) T { return box.Value }
+`,
+	})
+	result, err := mustLoad(t, "./...").Verify()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.HasCode(CodeInternalAPITypeLeakage) {
+		t.Fatalf("public recursive generic must remain valid: %s", Report(result))
+	}
+}

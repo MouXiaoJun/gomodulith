@@ -338,8 +338,16 @@ point at the package's file, not a specific line.
 On large repositories the `go/packages` load dominates runtime. `gomodulith
 verify` caches the loaded model in `.gomodulith/cache/model.json` and skips the
 load on subsequent runs when nothing changed. The cache key covers `go.mod`,
-`go.sum`, the Go toolchain version, the configuration, and the size+mtime of
-every Go file, so a stale cache can never hide a change.
+`go.sum`, Go source contents, configuration, and the effective `go env` build
+environment (including toolchain, build tags, target OS/architecture and cgo).
+Equal-sized edits still invalidate the cache even when mtimes are restored.
+
+Caching is conservative: active Go workspaces, local module replacements,
+vendor trees, overlays/alternate modfiles, external package drivers, symlinked
+trees and non-local load patterns fall back to normal loading. Old cache
+formats are ignored. The cache does not provide a snapshot of concurrent edits
+or track external C headers/toolchain modifications; use `--no-cache` when
+those inputs may change.
 
 ```bash
 gomodulith verify            # first run populates the cache

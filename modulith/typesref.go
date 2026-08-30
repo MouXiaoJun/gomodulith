@@ -12,16 +12,16 @@ import (
 // methods and aliases) and exported variables and constants.
 //
 // Referenced types are recorded as defining package + name and are not
-// expanded: the walk stops at every *types.Named except the top-level type
-// being declared. This keeps the result bounded and free of infinite recursion
-// for self-referential types.
+// expanded, except for the top-level type being declared. Generic arguments
+// are part of the API surface and are walked, with type-identity cycle guards.
 func collectAPITypeRefs(tp *types.Package) []TypeRef {
 	if tp == nil {
 		return nil
 	}
 	var out []TypeRef
 	seen := map[string]bool{}
-	walk := func(t types.Type) { walkType(t, &out, seen) }
+	visited := map[types.Type]bool{}
+	walk := func(t types.Type) { walkType(t, &out, seen, visited) }
 
 	scope := tp.Scope()
 	for _, name := range scope.Names() {
@@ -34,7 +34,7 @@ func collectAPITypeRefs(tp *types.Package) []TypeRef {
 				walkSignature(sig, walk)
 			}
 		case *types.TypeName:
-			walkDeclared(obj.Type(), &out, seen)
+			walkDeclared(obj.Type(), &out, seen, visited)
 		case *types.Var:
 			walk(obj.Type())
 		case *types.Const:
@@ -53,16 +53,16 @@ func collectAPITypeRefs(tp *types.Package) []TypeRef {
 
 // walkDeclared records a top-level exported type and expands its definition so
 // that types used by its fields, methods and underlying type are captured.
-func walkDeclared(t types.Type, out *[]TypeRef, seen map[string]bool) {
-	walkType(t, out, seen)
+func walkDeclared(t types.Type, out *[]TypeRef, seen map[string]bool, visited map[types.Type]bool) {
+	walkType(t, out, seen, visited)
 	expanded := map[string]bool{}
-	expandNamed(t, out, seen, expanded)
+	expandNamed(t, out, seen, expanded, visited)
 }
 
 // expandNamed records the methods of a named type and descends into its
 // underlying type. Each named type is expanded at most once per declaration,
 // preventing infinite recursion through self-referential types.
-func expandNamed(t types.Type, out *[]TypeRef, seen, expanded map[string]bool) {
+func expandNamed(t types.Type, out *[]TypeRef, seen, expanded map[string]bool, visited map[types.Type]bool) {
 	n, ok := t.(*types.Named)
 	if !ok {
 		return
@@ -77,7 +77,7 @@ func expandNamed(t types.Type, out *[]TypeRef, seen, expanded map[string]bool) {
 	}
 	expanded[key] = true
 
-	walk := func(tt types.Type) { walkType(tt, out, seen) }
+	walk := func(tt types.Type) { walkType(tt, out, seen, visited) }
 	for i := 0; i < n.NumMethods(); i++ {
 		m := n.Method(i)
 		if !isExported(m.Name()) {
@@ -92,11 +92,13 @@ func expandNamed(t types.Type, out *[]TypeRef, seen, expanded map[string]bool) {
 
 // walkType appends every *types.Named referenced by t to out, recording each
 // defining package/name at most once. It descends through structural types but
-// stops at named types (their internals belong to their own package).
-func walkType(t types.Type, out *[]TypeRef, seen map[string]bool) {
-	if t == nil {
+// named type definitions are not expanded, but their arguments are traversed.
+func walkType(t types.Type, out *[]TypeRef, seen map[string]bool, visited map[types.Type]bool) {
+	if t == nil || visited[t] {
 		return
 	}
+	visited[t] = true
+	walk := func(t types.Type) { walkType(t, out, seen, visited) }
 	switch tt := t.(type) {
 	case *types.Named:
 		obj := tt.Obj()
@@ -109,38 +111,41 @@ func walkType(t types.Type, out *[]TypeRef, seen map[string]bool) {
 			*out = append(*out, TypeRef{Package: obj.Pkg().Path(), Name: obj.Name()})
 		}
 		// Do not descend into the referenced type's definition.
+		for i := 0; i < tt.TypeArgs().Len(); i++ {
+			walk(tt.TypeArgs().At(i))
+		}
 	case *types.Pointer:
-		walkType(tt.Elem(), out, seen)
+		walk(tt.Elem())
 	case *types.Slice:
-		walkType(tt.Elem(), out, seen)
+		walk(tt.Elem())
 	case *types.Array:
-		walkType(tt.Elem(), out, seen)
+		walk(tt.Elem())
 	case *types.Map:
-		walkType(tt.Key(), out, seen)
-		walkType(tt.Elem(), out, seen)
+		walk(tt.Key())
+		walk(tt.Elem())
 	case *types.Chan:
-		walkType(tt.Elem(), out, seen)
+		walk(tt.Elem())
 	case *types.Signature:
-		walkSignature(tt, func(t types.Type) { walkType(t, out, seen) })
+		walkSignature(tt, walk)
 	case *types.Interface:
 		for i := 0; i < tt.NumMethods(); i++ {
-			walkType(tt.Method(i).Type(), out, seen)
+			walk(tt.Method(i).Type())
 		}
 	case *types.Struct:
 		for i := 0; i < tt.NumFields(); i++ {
-			walkType(tt.Field(i).Type(), out, seen)
+			walk(tt.Field(i).Type())
 		}
 	case *types.TypeParam:
-		walkType(tt.Constraint(), out, seen)
+		walk(tt.Constraint())
 	case *types.Union:
 		for i := 0; i < tt.Len(); i++ {
-			walkType(tt.Term(i).Type(), out, seen)
+			walk(tt.Term(i).Type())
 		}
 	case *types.Alias:
-		walkType(types.Unalias(tt), out, seen)
+		walk(types.Unalias(tt))
 	case *types.Tuple:
 		for i := 0; i < tt.Len(); i++ {
-			walkType(tt.At(i).Type(), out, seen)
+			walk(tt.At(i).Type())
 		}
 	}
 }
