@@ -461,7 +461,11 @@ exposes.
 - [x] shared physical source locations for terminal, SARIF and LSP output
 - [x] cache source locations without changing public model structs
 - [x] explicit LF checkout policy for Go source on every platform
-- [ ] verify the updated Windows Go 1.23–1.25 and stable CI matrix on a real Windows runner
+- [x] verify the updated Windows Go 1.23–1.25 and stable CI matrix on a real Windows runner
+
+The [maintenance verification run](https://github.com/MouXiaoJun/gomodulith/actions/runs/33354477290)
+passed all 12 Go/OS combinations, including formatting, build, vet, race tests
+and coverage. These changes are on `main` and have not been released as a tag.
 
 The maintenance scope is the existing architecture checks, CLI and exports:
 bug fixes, compatibility and regression coverage, not new runtime features.
