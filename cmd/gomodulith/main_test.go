@@ -2,11 +2,14 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/MouXiaoJun/gomodulith/modulith"
 )
 
 const cliFixtureModule = "example.com/app"
@@ -114,6 +117,48 @@ func TestRunVerifyViolation(t *testing.T) {
 	}
 	if !strings.Contains(out, "cross-module-private-access") {
 		t.Errorf("missing violation detail:\n%s", out)
+	}
+}
+
+func TestRunVerifySourceLocations(t *testing.T) {
+	writeCLIFixture(t, map[string]string{
+		"internal/user/api/api.go":    "package api\n",
+		"internal/user/domain/dom.go": "package domain\n",
+		"internal/order/api/a.go":     "package api\n",
+		"internal/order/api/z.go":     "package api\n\nimport _ \"example.com/app/internal/user/domain\"\n",
+	})
+	text, code := runCLI(t, "verify")
+	if code != 1 || !strings.Contains(text, "internal/order/api/z.go:3:10:") {
+		t.Fatalf("terminal location or exit: %d, %s", code, text)
+	}
+	// The subsequent invocations exercise the persisted model cache too.
+	lsp, code := runCLI(t, "verify", "--lsp")
+	var diags []modulith.Diagnostic
+	if code != 1 || json.Unmarshal([]byte(lsp), &diags) != nil || len(diags) != 1 {
+		t.Fatalf("LSP or exit: %d, %s", code, lsp)
+	}
+	if !strings.HasSuffix(diags[0].URI, "/internal/order/api/z.go") || diags[0].Range.Start != (modulith.LSPPosition{Line: 2, Character: 9}) {
+		t.Fatalf("LSP location: %+v", diags[0])
+	}
+	sarif, code := runCLI(t, "verify", "--sarif")
+	var doc struct {
+		Runs []struct {
+			Results []struct {
+				Locations []struct {
+					PhysicalLocation struct {
+						ArtifactLocation struct{ URI string }
+						Region           struct{ StartLine, StartColumn int }
+					}
+				}
+			}
+		}
+	}
+	if code != 1 || json.Unmarshal([]byte(sarif), &doc) != nil || len(doc.Runs) != 1 || len(doc.Runs[0].Results) != 1 || len(doc.Runs[0].Results[0].Locations) != 1 {
+		t.Fatalf("SARIF or exit: %d, %s", code, sarif)
+	}
+	loc := doc.Runs[0].Results[0].Locations[0].PhysicalLocation
+	if loc.ArtifactLocation.URI != "internal/order/api/z.go" || loc.Region.StartLine != 3 || loc.Region.StartColumn != 10 {
+		t.Fatalf("SARIF location: %+v", loc)
 	}
 }
 

@@ -167,6 +167,9 @@ type Application struct {
 	// pkgs indexes every loaded package by import path.
 	pkgs map[string]*Package
 
+	// sources retains physical locations without changing the public model structs.
+	sources map[string]*packageSources
+
 	// orphanPkgs are loaded packages that were not classified into a module.
 	orphanPkgs []*Package
 
@@ -398,11 +401,12 @@ func LoadExplicitIn(ctx context.Context, dir string, a *Application, patterns ..
 	if a.loaded {
 		return fmt.Errorf("modulith: application already loaded")
 	}
-	all, err := loadPackagesIn(ctx, dir, patterns)
+	all, sources, err := loadPackagesIn(ctx, dir, patterns)
 	if err != nil {
 		return err
 	}
 	a.pkgs = map[string]*Package{}
+	a.sources = sources
 	for _, p := range all {
 		a.pkgs[p.ID] = p
 	}
@@ -486,11 +490,12 @@ func (a *Application) load(ctx context.Context, patterns []string) error {
 
 // loadIn is load with an explicit working directory.
 func (a *Application) loadIn(ctx context.Context, dir string, patterns []string) error {
-	all, err := loadPackagesIn(ctx, dir, patterns)
+	all, sources, err := loadPackagesIn(ctx, dir, patterns)
 	if err != nil {
 		return err
 	}
 	a.pkgs = map[string]*Package{}
+	a.sources = sources
 	for _, p := range all {
 		a.pkgs[p.ID] = p
 	}

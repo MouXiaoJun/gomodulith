@@ -70,11 +70,17 @@ func Report(r *Result) string {
 			b.WriteString("cycle detected:\n")
 			for _, c := range r.Cycles {
 				fmt.Fprintf(&b, "%s\n", c.String())
+				if loc := r.Graph.App.locationForIssue(&Issue{Code: CodeCycle, To: c.String()}); loc != nil {
+					fmt.Fprintf(&b, "    %s:%d:%d\n", r.Graph.App.sourcePath(loc.File), loc.Range.Start.Line+1, loc.ByteColumn)
+				}
 			}
 		}
 		for _, i := range details {
 			if i.Code == CodeCycle {
 				continue // already shown above
+			}
+			if loc := r.Graph.App.locationForIssue(i); loc != nil {
+				fmt.Fprintf(&b, "%s:%d:%d: ", r.Graph.App.sourcePath(loc.File), loc.Range.Start.Line+1, loc.ByteColumn)
 			}
 			fmt.Fprintf(&b, "%s\n", i.String())
 		}

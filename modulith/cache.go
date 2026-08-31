@@ -17,7 +17,7 @@ import (
 )
 
 // cacheSchemaVersion is bumped whenever the on-disk cache format changes.
-const cacheSchemaVersion = 2
+const cacheSchemaVersion = 3
 
 // DefaultCacheDir is the directory, relative to the working directory, used
 // for the on-disk model cache when no explicit cache directory is given.
@@ -39,14 +39,15 @@ type cachedModule struct {
 
 // cachedModel is the serializable state of a loaded Application.
 type cachedModel struct {
-	Schema      int            `json:"schema"`
-	Fingerprint string         `json:"fingerprint"`
-	Config      Config         `json:"config"`
-	WD          string         `json:"wd"`
-	Explicit    bool           `json:"explicit"`
-	Packages    []*Package     `json:"packages"`
-	Modules     []cachedModule `json:"modules"`
-	Orphans     []string       `json:"orphans,omitempty"`
+	Schema      int                        `json:"schema"`
+	Fingerprint string                     `json:"fingerprint"`
+	Config      Config                     `json:"config"`
+	WD          string                     `json:"wd"`
+	Explicit    bool                       `json:"explicit"`
+	Packages    []*Package                 `json:"packages"`
+	Sources     map[string]*packageSources `json:"sources"`
+	Modules     []cachedModule             `json:"modules"`
+	Orphans     []string                   `json:"orphans,omitempty"`
 }
 
 // LoadCachedIn is like LoadIn but uses a disk cache under cacheDir (default
@@ -166,6 +167,7 @@ func tryLoadCache(ctx context.Context, cacheDir, wd string, config Config, patte
 		loaded:   true,
 		byName:   map[string]*Module{},
 		pkgs:     map[string]*Package{},
+		sources:  cm.Sources,
 	}
 	for _, p := range cm.Packages {
 		app.pkgs[p.ID] = p
@@ -208,6 +210,7 @@ func (a *Application) restore(from *Application) {
 	a.byName = from.byName
 	a.modules = from.modules
 	a.pkgs = from.pkgs
+	a.sources = from.sources
 	a.orphanPkgs = from.orphanPkgs
 }
 
@@ -225,6 +228,7 @@ func saveCache(ctx context.Context, a *Application, cacheDir string, patterns []
 		WD:          a.wd,
 		Explicit:    a.explicit,
 		Packages:    a.Packages(),
+		Sources:     a.sources,
 		Modules:     a.cachedModuleDefs(),
 	}
 	for _, p := range a.orphanPkgs {

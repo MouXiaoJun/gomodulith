@@ -11,10 +11,15 @@ Requirements: Go 1.23 or newer.
 ```bash
 go build ./...        # build the library and CLI
 go vet ./...          # static analysis
-go test ./...         # run the full test suite
-go test ./modulith/ -cover   # coverage
+go test -race -count=1 ./...   # full CI test suite with race detection
+go test -cover -count=1 ./...  # full CI coverage run
 gofmt -l .            # formatting check (must be empty)
 ```
+
+The CI matrix retains Go 1.23, 1.24 and 1.25, plus `stable`, on Linux, macOS and Windows.
+Cross-compiling a Windows binary is not a Windows test run. `.gitattributes`
+keeps Go source LF even with Git for Windows `core.autocrlf=true`; do not
+disable the formatting check or normalize files in CI to hide a failure.
 
 ## Tests
 
@@ -26,6 +31,9 @@ gofmt -l .            # formatting check (must be empty)
 - Real Go import cycles are compile errors, so module-cycle tests build module
   cycles from multiple packages per module using distinct import pairs — this
   keeps the fixture compilable while still producing a module-level cycle.
+- Source-location regressions cover multiple files, CRLF, Unicode/UTF-16,
+  Windows/UNC URI escaping, build constraints and both cache-loading paths.
+  Findings without a real source location must not be pinned to arbitrary files.
 
 ## Public API design
 
@@ -38,7 +46,7 @@ gofmt -l .            # formatting check (must be empty)
 
 ## Pull requests
 
-1. Run `gofmt -w .`, `go vet ./...`, and `go test ./...` before pushing.
+1. Format touched files with `gofmt -w`, then run every command above before pushing.
 2. Add tests that cover the new behaviour.
 3. Keep changes focused; if you are changing architecture semantics (for
    example the meaning of "allowed dependency"), open an issue first to

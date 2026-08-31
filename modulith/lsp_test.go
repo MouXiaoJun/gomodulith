@@ -34,8 +34,8 @@ func TestExportDiagnostics(t *testing.T) {
 		if !strings.Contains(d.URI, "/internal/order/domain/") {
 			t.Errorf("uri should point at the offending package, got %q", d.URI)
 		}
-		if d.Range.Start.Line != 0 {
-			t.Errorf("start line = %d, want 0", d.Range.Start.Line)
+		if d.Range.Start.Line != 2 {
+			t.Errorf("start line = %d, want import line 2", d.Range.Start.Line)
 		}
 	}
 	if !found {
@@ -59,8 +59,7 @@ func TestExportDiagnosticsHealthy(t *testing.T) {
 }
 
 func TestExportDiagnosticsModuleLevelIssue(t *testing.T) {
-	// A module with no public API yields a module-level warning attached to
-	// the module's first file.
+	// Missing configuration has no source location: do not blame an arbitrary file.
 	files := map[string]string{
 		"internal/user/domain/dom.go": goFile("domain", nil),
 	}
@@ -70,10 +69,11 @@ func TestExportDiagnosticsModuleLevelIssue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExportDiagnostics: %v", err)
 	}
-	if len(diags) == 0 {
-		t.Fatal("expected at least the missing-public-api diagnostic")
+	if len(diags) != 0 {
+		t.Fatalf("unexpected fabricated locations: %+v", diags)
 	}
-	if diags[0].Severity != SeverityWarningLSP {
-		t.Errorf("severity = %d, want warning", diags[0].Severity)
+	res, err := app.Verify()
+	if err != nil || !res.HasCode(CodeMissingPublicAPI) {
+		t.Fatalf("missing-public-api finding must remain available: %v, %v", res, err)
 	}
 }

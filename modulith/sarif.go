@@ -3,8 +3,9 @@ package modulith
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"path/filepath"
 	"sort"
-	"strings"
 )
 
 // sarifSchema is the SARIF 2.1.0 JSON schema URL.
@@ -18,8 +19,9 @@ type sarifLog struct {
 }
 
 type sarifRun struct {
-	Tool    sarifTool     `json:"tool"`
-	Results []sarifResult `json:"results"`
+	Tool       sarifTool     `json:"tool"`
+	Results    []sarifResult `json:"results"`
+	ColumnKind string        `json:"columnKind"`
 }
 
 type sarifTool struct {
@@ -68,7 +70,10 @@ type sarifArtifactLocation struct {
 }
 
 type sarifRegion struct {
-	StartLine int `json:"startLine"`
+	StartLine   int `json:"startLine"`
+	StartColumn int `json:"startColumn"`
+	EndLine     int `json:"endLine"`
+	EndColumn   int `json:"endColumn"`
 }
 
 type sarifLogicalLocation struct {
@@ -118,6 +123,7 @@ func (a *Application) ExportSARIF() ([]byte, error) {
 		Version: "2.1.0",
 		Runs: []sarifRun{
 			{
+				ColumnKind: "utf16CodeUnits",
 				Tool: sarifTool{
 					Driver: sarifDriver{
 						Name:            "gomodulith",
@@ -151,18 +157,21 @@ func (a *Application) ExportSARIF() ([]byte, error) {
 			Level:   level,
 			Message: sarifMultiformatMsg{Text: issue.Message},
 		}
-		if issue.From != "" {
-			// Anchor the finding to the source package directory when known.
-			if uri := issueRelDir(a, issue.From); uri != "" {
-				r.Locations = append(r.Locations, sarifLocation{
-					PhysicalLocation: &sarifPhysicalLocation{
-						ArtifactLocation: sarifArtifactLocation{URI: uri},
-					},
-					LogicalLocations: []sarifLogicalLocation{
-						{Name: issue.Module, Kind: "module"},
-					},
-				})
+		if loc := a.locationForIssue(issue); loc != nil {
+			path := a.sourcePath(loc.File)
+			uri := (&url.URL{Path: path}).String()
+			if filepath.IsAbs(path) {
+				uri = fileURI(path)
 			}
+			r.Locations = append(r.Locations, sarifLocation{
+				PhysicalLocation: &sarifPhysicalLocation{
+					ArtifactLocation: sarifArtifactLocation{URI: uri},
+					Region: &sarifRegion{
+						StartLine: loc.Range.Start.Line + 1, StartColumn: loc.Range.Start.Character + 1,
+						EndLine: loc.Range.End.Line + 1, EndColumn: loc.Range.End.Character + 1,
+					},
+				},
+			})
 		} else if issue.Module != "" {
 			r.Locations = append(r.Locations, sarifLocation{
 				LogicalLocations: []sarifLogicalLocation{
@@ -178,15 +187,4 @@ func (a *Application) ExportSARIF() ([]byte, error) {
 		return nil, fmt.Errorf("modulith: marshal sarif: %w", err)
 	}
 	return out, nil
-}
-
-// issueRelDir maps a package import path (or module name) to a relative
-// directory on disk, when the package is loaded.
-func issueRelDir(a *Application, id string) string {
-	if p := a.pkgs[id]; p != nil && p.RelDir != "" {
-		return strings.TrimSuffix(p.RelDir, "/") + "/"
-	}
-	// Fall back to the package path split on dots is not meaningful; try the
-	// module root convention.
-	return ""
 }

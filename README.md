@@ -312,17 +312,21 @@ tools that analyse a revision other than the current checkout.
 `app.ExportSARIF()` returns verification findings as a SARIF 2.1.0 document,
 ready for GitHub code scanning and similar consumers. Use it from Go, or via
 `gomodulith verify --sarif` / `gomodulith export --format sarif --verify`.
+Physical locations identify the same source as the terminal report: imports
+for dependency rules, type references (or the exposing declaration for inferred
+types) for API leakage, and the first concrete edge for a module cycle. SARIF
+uses escaped repository-relative file URIs and one-based UTF-16 columns.
 
 ### LSP-style diagnostics
 
 For editors and language servers, `gomodulith verify --lsp` emits violations as
-LSP `Diagnostic` objects, each attached to the first source file of the
-offending package (`file://` URI, zero-based range, LSP severity):
+LSP `Diagnostic` objects attached to the actual offending import or API
+declaration (`file://` URI, zero-based UTF-16 range, LSP severity):
 
 ```json
 {
   "uri": "file:///path/to/internal/order/domain/dom.go",
-  "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 0 } },
+  "range": { "start": { "line": 2, "character": 9 }, "end": { "line": 2, "character": 47 } },
   "severity": 1,
   "code": "cross-module-private-access",
   "source": "gomodulith",
@@ -330,8 +334,21 @@ offending package (`file://` URI, zero-based range, LSP severity):
 }
 ```
 
-From Go, use `app.ExportDiagnostics()`. Diagnostics are package-level: they
-point at the package's file, not a specific line.
+From Go, use `app.ExportDiagnostics()`. Findings remain deduplicated by the
+existing rule semantics: when multiple sites cause one finding, a deterministic
+representative is selected. Terminal columns are one-based UTF-8 byte columns
+(as in Go compiler output); LSP/SARIF columns refer to the same token using
+UTF-16 code units. Positions describe the sources at load time, ignore `//line`
+remapping, and survive a model cache hit. Reload after source changes.
+Source analysis targets on-disk checkouts. `GOFLAGS=-overlay=...` alone is not
+a supported editor-buffer API: `go/packages` requires a separate `Config.Overlay`
+mapping, which this API does not expose. Write the source files before loading.
+
+Missing API/event declarations have no corresponding Go token. They remain
+in `Verify`, terminal and SARIF results, but are omitted from LSP diagnostics
+instead of fabricating a first-file `0:0` position. `verify --lsp` still returns
+a failing exit status if verification finds an error, even if no diagnostic
+can be located. This is an export format, not an LSP server.
 
 ### Incremental caching
 
@@ -438,7 +455,19 @@ exposes.
 - [x] type-level API analysis via `go/types` (exported API surface references)
 - [x] `cross-module-type-leakage` — public surfaces must not expose another module's private types
 - [x] `internal-api-leakage` — public surfaces must not expose the module's own private types (unusable from outside)
-- [ ] unused-event detection (published events nobody subscribes to)
+
+### Unreleased — Maintenance readiness
+
+- [x] shared physical source locations for terminal, SARIF and LSP output
+- [x] cache source locations without changing public model structs
+- [x] explicit LF checkout policy for Go source on every platform
+- [ ] verify the updated Windows Go 1.23–1.25 and stable CI matrix on a real Windows runner
+
+The maintenance scope is the existing architecture checks, CLI and exports:
+bug fixes, compatibility and regression coverage, not new runtime features.
+Unused-event detection is deferred until there is an explicit subscription
+model; it is not implemented and is not a maintenance gate. No DI runtime,
+LSP server or additional report format is planned in this phase.
 
 ## Project philosophy
 
